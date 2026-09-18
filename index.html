@@ -491,6 +491,9 @@ function AdminDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [allotted, setAllotted] = useState(2);
+  const [bulkText, setBulkText] = useState("");
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState("");
   const [error, setError] = useState("");
   const [savingInfo, setSavingInfo] = useState(false);
   const [infoSaved, setInfoSaved] = useState(false);
@@ -580,6 +583,28 @@ function AdminDashboard({ user, onLogout }) {
     if (error) { setError("L'ajout n'a pas pu être enregistré."); return; }
     setName(""); setAllotted(2);
     refresh();
+  };
+
+  const importBulkInvites = async () => {
+    const lines = bulkText.split("\n").map((l) => l.trim()).filter(Boolean);
+    const rows = [];
+    lines.forEach((line) => {
+      const parts = line.split(",");
+      const n = (parts[0] || "").trim();
+      const a = parts[1] ? parseInt(parts[1].trim(), 10) : 1;
+      if (n) rows.push({ wedding_id: wedding.id, name: n, allotted: isNaN(a) || a < 1 ? 1 : a });
+    });
+    if (rows.length === 0) return;
+    setBulkStatus("Import en cours…");
+    const { error } = await sb.from("invites").insert(rows);
+    if (error) {
+      setBulkStatus("Échec de l'import (" + error.message + ").");
+    } else {
+      setBulkStatus(rows.length + " invitation(s) ajoutée(s).");
+      setBulkText("");
+      setShowBulk(false);
+      refresh();
+    }
   };
 
   const removeInvite = async (id) => {
@@ -681,6 +706,25 @@ function AdminDashboard({ user, onLogout }) {
           <div style={{ width: 130 }}><Field label="Nombre attribué"><TextInput type="number" min={1} value={allotted} onChange={(e) => setAllotted(e.target.value)} /></Field></div>
           <div style={{ marginBottom: 20 }}><Button onClick={addInvite}>Ajouter</Button></div>
         </div>
+        <button onClick={() => setShowBulk((v) => !v)} style={{ fontFamily: bodyFont, fontSize: 12, color: colors.gold, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", padding: 0 }}>
+          {showBulk ? "Fermer l'import groupé" : "Importer plusieurs foyers d'un coup (utile pour une longue liste)"}
+        </button>
+        {showBulk && (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 8 }}>
+              Un foyer par ligne, au format <em>Nom, nombre de places</em> :
+            </p>
+            <textarea
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={"Famille Dubois, 4\nCamille et Théo, 2\nJean Martin, 1"}
+              rows={6}
+              style={{ ...inputStyle, width: "100%", resize: "vertical", marginBottom: 8 }}
+            />
+            <Button onClick={importBulkInvites}>Importer</Button>
+            {bulkStatus && <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.success, marginTop: 8 }}>{bulkStatus}</p>}
+          </div>
+        )}
       </div>
 
       <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>
