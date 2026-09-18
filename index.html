@@ -94,6 +94,51 @@ const colors = {
 const serif = "'Cormorant Garamond', serif";
 const bodyFont = "'EB Garamond', serif";
 
+function useCountdown(targetTime) {
+  const [remaining, setRemaining] = useState(() => (targetTime ? targetTime - Date.now() : null));
+  useEffect(() => {
+    if (!targetTime) return;
+    const id = setInterval(() => setRemaining(targetTime - Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [targetTime]);
+  return remaining;
+}
+
+function CountdownBlock({ label, targetTime }) {
+  const remaining = useCountdown(targetTime);
+  if (!targetTime || remaining === null) return null;
+  if (remaining <= 0) {
+    return (
+      <div style={{ textAlign: "center", margin: "16px 0" }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 12, letterSpacing: "0.08em", color: colors.gold, marginBottom: 4 }}>{label}</p>
+        <p style={{ fontFamily: serif, fontSize: 20, color: colors.navy, fontStyle: "italic" }}>Le jour est arrivé</p>
+      </div>
+    );
+  }
+  const totalSeconds = Math.floor(remaining / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const unit = (value, word) => (
+    <div style={{ textAlign: "center", minWidth: 52 }}>
+      <p style={{ fontFamily: serif, fontSize: 26, color: colors.navy, margin: 0, lineHeight: 1 }}>{String(value).padStart(2, "0")}</p>
+      <p style={{ fontFamily: bodyFont, fontSize: 10, color: colors.muted, letterSpacing: "0.05em", marginTop: 2 }}>{word}</p>
+    </div>
+  );
+  return (
+    <div style={{ textAlign: "center", margin: "16px 0" }}>
+      <p style={{ fontFamily: bodyFont, fontSize: 12, letterSpacing: "0.08em", color: colors.gold, marginBottom: 8 }}>{label}</p>
+      <div style={{ display: "flex", justifyContent: "center", gap: 14 }}>
+        {unit(days, "jours")}
+        {unit(hours, "heures")}
+        {unit(minutes, "min")}
+        {unit(seconds, "sec")}
+      </div>
+    </div>
+  );
+}
+
 function Divider() {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, margin: "24px 0" }}>
@@ -278,6 +323,12 @@ function GuestView({ weddingId }) {
             <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, marginTop: 8 }}>
               {wedding.venue_name}{wedding.venue_name && wedding.address ? " — " : ""}{wedding.address}
             </p>
+          )}
+          {wedding.wedding_date_iso && (
+            <CountdownBlock label="Jour J dans" targetTime={new Date(wedding.wedding_date_iso + "T00:00:00").getTime()} />
+          )}
+          {wedding.rsvp_deadline && !isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time) && (
+            <CountdownBlock label="Temps restant pour répondre" targetTime={new Date(wedding.rsvp_deadline + "T" + (wedding.rsvp_deadline_time || "23:59") + ":00").getTime()} />
           )}
           {wedding.rsvp_deadline && (
             <p style={{ fontFamily: bodyFont, fontSize: 13, color: isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time) ? colors.danger : colors.gold, marginTop: 12 }}>
@@ -653,7 +704,7 @@ function AdminDashboard({ user, onLogout }) {
   const saveWedding = async () => {
     setSavingInfo(true); setError("");
     const payload = {
-      couple_names: wedding.couple_names, wedding_date: wedding.wedding_date, venue_name: wedding.venue_name,
+      couple_names: wedding.couple_names, wedding_date: wedding.wedding_date, wedding_date_iso: wedding.wedding_date_iso || null, venue_name: wedding.venue_name,
       address: wedding.address, message: wedding.message, rsvp_deadline: wedding.rsvp_deadline || null,
       rsvp_deadline_time: wedding.rsvp_deadline_time || "23:59", open_mode: !!wedding.open_mode,
       announced: true, meal_mode: wedding.meal_mode, meal_options: wedding.meal_options, single_menu: wedding.single_menu,
@@ -750,7 +801,8 @@ function AdminDashboard({ user, onLogout }) {
         <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Annonce du mariage &amp; lieu de réception</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
           <div style={{ flex: "1 1 220px" }}><Field label="Noms des mariés"><TextInput value={wedding.couple_names || ""} onChange={(e) => updateWeddingField("couple_names", e.target.value)} /></Field></div>
-          <div style={{ flex: "1 1 160px" }}><Field label="Date"><TextInput value={wedding.wedding_date || ""} onChange={(e) => updateWeddingField("wedding_date", e.target.value)} placeholder="Samedi 12 juin 2027" /></Field></div>
+          <div style={{ flex: "1 1 160px" }}><Field label="Date (texte affiché)"><TextInput value={wedding.wedding_date || ""} onChange={(e) => updateWeddingField("wedding_date", e.target.value)} placeholder="Samedi 12 juin 2027" /></Field></div>
+          <div style={{ flex: "1 1 160px" }}><Field label="Date réelle (pour le compte à rebours)"><TextInput type="date" value={wedding.wedding_date_iso || ""} onChange={(e) => updateWeddingField("wedding_date_iso", e.target.value)} /></Field></div>
           <div style={{ flex: "1 1 220px" }}><Field label="Nom de la salle"><TextInput value={wedding.venue_name || ""} onChange={(e) => updateWeddingField("venue_name", e.target.value)} /></Field></div>
           <div style={{ flex: "1 1 260px" }}><Field label="Adresse"><TextInput value={wedding.address || ""} onChange={(e) => updateWeddingField("address", e.target.value)} /></Field></div>
           <div style={{ flex: "1 1 100%" }}><Field label="Petit mot aux invités"><TextInput value={wedding.message || ""} onChange={(e) => updateWeddingField("message", e.target.value)} /></Field></div>
