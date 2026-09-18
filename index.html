@@ -73,9 +73,16 @@ function formatDateFr(iso) {
   if (isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
-function isPastDeadline(iso) {
+function isPastDeadline(iso, time) {
   if (!iso) return false;
-  return new Date(iso + "T23:59:59").getTime() < Date.now();
+  const t = time && /^\d{2}:\d{2}$/.test(time) ? time : "23:59";
+  return new Date(iso + "T" + t + ":00").getTime() < Date.now();
+}
+function formatDeadlineFr(iso, time) {
+  if (!iso) return "";
+  const datePart = formatDateFr(iso);
+  const t = time && /^\d{2}:\d{2}$/.test(time) ? time : null;
+  return t ? `${datePart} à ${t}` : datePart;
 }
 
 /* ---------------------------- UI de base ---------------------------- */
@@ -148,6 +155,9 @@ function GuestView({ weddingId }) {
   const [meals, setMeals] = useState([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [openName, setOpenName] = useState("");
+  const [openCount, setOpenCount] = useState(1);
+  const [openMeals, setOpenMeals] = useState([]);
 
   useEffect(() => {
     sb.from("weddings").select("*").eq("id", weddingId).single().then(({ data, error }) => {
@@ -161,6 +171,49 @@ function GuestView({ weddingId }) {
 
   const isSingleMenu = wedding.meal_mode === "single";
   const mealOptions = wedding.meal_options && wedding.meal_options.length > 0 ? wedding.meal_options : DEFAULT_MEAL_OPTIONS;
+  const deadlinePassed = isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time);
+
+  const updateOpenCount = (n) => {
+    const capped = Math.max(1, n);
+    setOpenCount(capped);
+    setOpenMeals((prev) => {
+      const next = [...prev];
+      const fill = isSingleMenu ? wedding.single_menu : mealOptions[0];
+      while (next.length < capped) next.push(fill);
+      return next.slice(0, capped);
+    });
+  };
+
+  const submitOpen = async () => {
+    if (!openName.trim()) return;
+    setLoading(true); setError("");
+    const resolvedMeals = isSingleMenu
+      ? Array(openCount).fill(wedding.single_menu || "Menu unique")
+      : Array.from({ length: openCount }, (_, i) => openMeals[i] || mealOptions[0]);
+    try {
+      const { data: existingInvite } = await sb.from("invites").select("*").eq("wedding_id", weddingId).ilike("name", openName.trim()).maybeSingle();
+      let invite = existingInvite;
+      if (invite) {
+        await sb.from("invites").update({ allotted: openCount }).eq("id", invite.id);
+      } else {
+        const { data: created, error: createErr } = await sb.from("invites").insert({ wedding_id: weddingId, name: openName.trim(), allotted: openCount }).select().single();
+        if (createErr) { setError("Inscription impossible (" + createErr.message + ")."); setLoading(false); return; }
+        invite = created;
+      }
+      const payload = { invite_id: invite.id, attending: true, guest_count: openCount, meals: resolvedMeals, submitted_at: new Date().toISOString() };
+      const { error: rsvpErr } = await sb.from("rsvps").upsert(payload, { onConflict: "invite_id" });
+      if (rsvpErr) { setError("La confirmation n'a pas pu être enregistrée (" + rsvpErr.message + ")."); setLoading(false); return; }
+      setSelected(invite);
+      setCount(openCount);
+      setMeals(resolvedMeals);
+      setAttending(true);
+      setSaved(true);
+    } catch (e) {
+      setError("Une erreur est survenue. Réessayez.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const search = async () => {
     if (!query.trim()) return;
@@ -227,8 +280,8 @@ function GuestView({ weddingId }) {
             </p>
           )}
           {wedding.rsvp_deadline && (
-            <p style={{ fontFamily: bodyFont, fontSize: 13, color: isPastDeadline(wedding.rsvp_deadline) ? colors.danger : colors.gold, marginTop: 12 }}>
-              {isPastDeadline(wedding.rsvp_deadline) ? "La date limite de réponse est dépassée — merci de nous contacter directement." : `Merci de répondre avant le ${formatDateFr(wedding.rsvp_deadline)}`}
+            <p style={{ fontFamily: bodyFont, fontSize: 13, color: isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time) ? colors.danger : colors.gold, marginTop: 12 }}>
+              {isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time) ? "La date limite de réponse est dépassée — merci de nous contacter directement." : `Merci de répondre avant le ${formatDeadlineFr(wedding.rsvp_deadline, wedding.rsvp_deadline_time)}`}
             </p>
           )}
           <Divider />
@@ -239,7 +292,41 @@ function GuestView({ weddingId }) {
       <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text, textAlign: "center", marginTop: 8 }}>Retrouvez votre nom pour répondre à notre invitation</p>
       <Divider />
 
-      {!selected && (
+      {!selected && deadlinePassed && (
+        <p style={{ fontFamily: bodyFont, color: colors.danger, fontSize: 15, textAlign: "center" }}>
+          La date limite de réponse est dépassée. Merci de contacter directement les mariés.
+        </p>
+      )}
+
+      {!selected && !deadlinePassed && wedding.open_mode && (
+        <React.Fragment>
+          <Field label="Votre nom (ou celui du foyer)">
+            <TextInput value={openName} onChange={(e) => setOpenName(e.target.value)} placeholder="Ex. Famille Dubois" />
+          </Field>
+          <Field label="Nombre de personnes présentes">
+            <TextInput type="number" min={1} max={30} value={openCount} onChange={(e) => updateOpenCount(Math.max(1, Number(e.target.value) || 1))} />
+          </Field>
+          {isSingleMenu ? (
+            <div style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, background: "#FAF6F0", border: `1px solid ${colors.border}`, padding: "10px 12px", marginBottom: 20 }}>
+              Menu prévu : {wedding.single_menu || "à préciser par les mariés"}
+            </div>
+          ) : (
+            Array.from({ length: openCount }).map((_, idx) => (
+              <Field key={idx} label={`Choix du repas — personne ${idx + 1}`}>
+                <Select value={openMeals[idx] || mealOptions[0]} onChange={(e) => { const next = [...openMeals]; next[idx] = e.target.value; setOpenMeals(next); }}>
+                  {mealOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                </Select>
+              </Field>
+            ))
+          )}
+          {error && <ErrorText>{error}</ErrorText>}
+          <div style={{ textAlign: "center" }}>
+            <Button onClick={submitOpen} disabled={loading || !openName.trim()}>{loading ? "Envoi…" : "Confirmer ma présence"}</Button>
+          </div>
+        </React.Fragment>
+      )}
+
+      {!selected && !deadlinePassed && !wedding.open_mode && (
         <React.Fragment>
           <Field label="Votre nom (ou celui du foyer invité)">
             <TextInput value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="Ex. Famille Dubois" />
@@ -568,6 +655,7 @@ function AdminDashboard({ user, onLogout }) {
     const payload = {
       couple_names: wedding.couple_names, wedding_date: wedding.wedding_date, venue_name: wedding.venue_name,
       address: wedding.address, message: wedding.message, rsvp_deadline: wedding.rsvp_deadline || null,
+      rsvp_deadline_time: wedding.rsvp_deadline_time || "23:59", open_mode: !!wedding.open_mode,
       announced: true, meal_mode: wedding.meal_mode, meal_options: wedding.meal_options, single_menu: wedding.single_menu,
       meal_overrides: wedding.meal_overrides || {},
     };
@@ -666,13 +754,28 @@ function AdminDashboard({ user, onLogout }) {
           <div style={{ flex: "1 1 220px" }}><Field label="Nom de la salle"><TextInput value={wedding.venue_name || ""} onChange={(e) => updateWeddingField("venue_name", e.target.value)} /></Field></div>
           <div style={{ flex: "1 1 260px" }}><Field label="Adresse"><TextInput value={wedding.address || ""} onChange={(e) => updateWeddingField("address", e.target.value)} /></Field></div>
           <div style={{ flex: "1 1 100%" }}><Field label="Petit mot aux invités"><TextInput value={wedding.message || ""} onChange={(e) => updateWeddingField("message", e.target.value)} /></Field></div>
-          <div style={{ flex: "1 1 200px" }}><Field label="Date limite de réponse"><TextInput type="date" value={wedding.rsvp_deadline || ""} onChange={(e) => updateWeddingField("rsvp_deadline", e.target.value)} /></Field></div>
+          <div style={{ flex: "1 1 160px" }}><Field label="Date limite de réponse"><TextInput type="date" value={wedding.rsvp_deadline || ""} onChange={(e) => updateWeddingField("rsvp_deadline", e.target.value)} /></Field></div>
+          <div style={{ flex: "1 1 120px" }}><Field label="Heure limite"><TextInput type="time" value={wedding.rsvp_deadline_time || "23:59"} onChange={(e) => updateWeddingField("rsvp_deadline_time", e.target.value)} /></Field></div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <Button onClick={saveWedding} disabled={savingInfo}>{savingInfo ? "Enregistrement…" : "Enregistrer et annoncer"}</Button>
           {infoSaved && <span style={{ fontFamily: bodyFont, fontSize: 13, color: colors.success }}>Enregistré.</span>}
         </div>
         <ErrorText>{error}</ErrorText>
+      </div>
+
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 8 }}>Mode de réponse</p>
+        <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 16 }}>
+          Pour un grand nombre d'invités, laissez chacun s'inscrire lui-même plutôt que de préparer la liste à l'avance.
+        </p>
+        <div style={{ display: "flex", gap: 12 }}>
+          <Button variant={!wedding.open_mode ? "primary" : "ghost"} onClick={() => updateWeddingField("open_mode", false)}>Liste préparée par vous</Button>
+          <Button variant={wedding.open_mode ? "primary" : "ghost"} onClick={() => updateWeddingField("open_mode", true)}>Les invités s'inscrivent eux-mêmes</Button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+          <Button onClick={saveWedding} disabled={savingInfo}>{savingInfo ? "Enregistrement…" : "Enregistrer"}</Button>
+        </div>
       </div>
 
       <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
@@ -770,7 +873,7 @@ function AdminDashboard({ user, onLogout }) {
                 <p style={{ color: colors.navy, fontSize: 16, margin: 0 }}>{inv.name}</p>
                 <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>{inv.allotted} place{inv.allotted > 1 ? "s" : ""} attribuée{inv.allotted > 1 ? "s" : ""}</p>
                 {r ? (r.attending ? <p style={{ color: colors.success, fontSize: 13, margin: 0 }}>Présent · {r.guest_count} pers. — {(r.meals || []).join(", ")}</p> : <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>Absent</p>)
-                  : isPastDeadline(wedding.rsvp_deadline) ? <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>En retard</p> : <p style={{ color: colors.gold, fontSize: 13, margin: 0 }}>En attente</p>}
+                  : isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time) ? <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>En retard</p> : <p style={{ color: colors.gold, fontSize: 13, margin: 0 }}>En attente</p>}
               </div>
               <Button variant="danger" onClick={() => removeInvite(inv.id)}>Retirer</Button>
             </div>
