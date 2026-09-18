@@ -500,7 +500,12 @@ function AdminDashboard({ user, onLogout }) {
   const ensureWedding = useCallback(async () => {
     const { data } = await sb.from("weddings").select("*").eq("organizer_id", user.id).limit(1);
     if (data && data.length > 0) return data[0];
-    const { data: created } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
+    const { data: created, error } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
+    if (error) {
+      // Une autre requête a créé la ligne entre-temps (grâce à la contrainte unique) — on la relit simplement.
+      const { data: existing } = await sb.from("weddings").select("*").eq("organizer_id", user.id).limit(1);
+      return existing && existing[0];
+    }
     return created;
   }, [user.id]);
 
