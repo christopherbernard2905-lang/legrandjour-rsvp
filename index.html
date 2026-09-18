@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Le Grand Jour — RSVP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #F3ECE0; }
+  * { box-sizing: border-box; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useRef } = React;
+
+/* ---------------------------- Config Supabase ---------------------------- */
+const SUPABASE_URL = "https://vrbxuotdelgmxqojzoki.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyYnh1b3RkZWxnbXhxb2p6b2tpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3Mzg5ODksImV4cCI6MjEwNTMxNDk4OX0.XwkVJUZ0xVSyV9nLu5c6FSDciaj59DjHvPaYPs9WbfM";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const DEFAULT_MEAL_OPTIONS = [
+  "Boeuf Rossini, sauce périgueux",
+  "Filet de bar, beurre blanc",
+  "Risotto aux champignons (végétarien)",
+];
+
+function uid() { return Math.random().toString(36).slice(2, 10); }
+
+function normalizeText(s) {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+}
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const al = a.length, bl = b.length;
+  if (al === 0) return bl;
+  if (bl === 0) return al;
+  let prev = Array(bl + 1).fill(0).map((_, i) => i);
+  for (let i = 1; i <= al; i++) {
+    const curr = [i];
+    for (let j = 1; j <= bl; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    prev = curr;
+  }
+  return prev[bl];
+}
+function wordMatches(qw, nw) {
+  if (!qw) return true;
+  if (nw.includes(qw) || qw.includes(nw)) return true;
+  const tol = qw.length <= 4 ? 1 : qw.length <= 8 ? 2 : 3;
+  return levenshtein(qw, nw) <= tol;
+}
+function fuzzyNameMatch(query, name) {
+  const nq = normalizeText(query), nn = normalizeText(name);
+  if (!nq) return false;
+  if (nn.includes(nq)) return true;
+  const qws = nq.split(" ").filter(Boolean), nws = nn.split(" ").filter(Boolean);
+  return qws.every((qw) => nws.some((nw) => wordMatches(qw, nw)));
+}
+function formatDateFr(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+function isPastDeadline(iso) {
+  if (!iso) return false;
+  return new Date(iso + "T23:59:59").getTime() < Date.now();
+}
+
+/* ---------------------------- UI de base ---------------------------- */
+const colors = {
+  bg: "#F3ECE0", card: "#FFFDF9", border: "#E4D4B8", borderStrong: "#CBB894",
+  gold: "#B08D57", navy: "#1F2A44", text: "#5B5346", muted: "#8A7F6A",
+  danger: "#9A3B3B", success: "#2E5B3E",
+};
+const serif = "'Cormorant Garamond', serif";
+const bodyFont = "'EB Garamond', serif";
+
+function Divider() {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, margin: "24px 0" }}>
+      <span style={{ width: 40, height: 1, background: colors.gold }} />
+      <span style={{ color: colors.gold, fontSize: 10 }}>◆</span>
+      <span style={{ width: 40, height: 1, background: colors.gold }} />
+    </div>
+  );
+}
+function Frame({ children }) {
+  return (
+    <div style={{ width: "100%", maxWidth: 440, margin: "0 auto", background: colors.card, border: `1px solid ${colors.gold}`, boxShadow: `0 0 0 5px ${colors.card}, 0 0 0 6px ${colors.border}`, padding: "40px 32px" }}>
+      {children}
+    </div>
+  );
+}
+function Field({ label, children }) {
+  return (
+    <label style={{ display: "block", marginBottom: 20 }}>
+      <span style={{ display: "block", marginBottom: 8, fontFamily: bodyFont, fontSize: 15, color: colors.navy }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+const inputStyle = { width: "100%", fontFamily: bodyFont, fontSize: 16, padding: "10px 12px", background: "#FAF6F0", border: `1px solid ${colors.borderStrong}`, color: colors.navy, outline: "none", boxSizing: "border-box" };
+function TextInput(props) { return <input {...props} style={{ ...inputStyle, ...(props.style || {}) }} />; }
+function Select(props) { return <select {...props} style={{ ...inputStyle, ...(props.style || {}) }}>{props.children}</select>; }
+function Button({ children, onClick, variant = "primary", small, disabled, type = "button" }) {
+  const base = { fontFamily: bodyFont, fontSize: small ? 13 : 16, letterSpacing: "0.02em", padding: small ? "6px 14px" : "11px 26px", cursor: disabled ? "default" : "pointer", border: `1px solid ${colors.navy}`, transition: "all 150ms ease", opacity: disabled ? 0.5 : 1, whiteSpace: "nowrap" };
+  const styles = variant === "primary" ? { ...base, background: colors.navy, color: "#FAF6F0" }
+    : variant === "ghost" ? { ...base, background: "transparent", color: colors.navy, border: `1px solid ${colors.borderStrong}` }
+    : { ...base, background: "transparent", color: colors.danger, border: `1px solid ${colors.danger}` };
+  return <button type={type} onClick={onClick} disabled={disabled} style={styles}>{children}</button>;
+}
+function ErrorText({ children }) {
+  if (!children) return null;
+  return <p style={{ fontFamily: bodyFont, color: colors.danger, fontSize: 14, marginTop: 4 }}>{children}</p>;
+}
+function MetricCard({ label, value, accent }) {
+  return (
+    <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: "14px 18px", flex: "1 1 130px", textAlign: "center" }}>
+      <p style={{ fontFamily: serif, fontSize: 26, color: accent ? colors.gold : colors.navy, margin: 0, lineHeight: 1 }}>{value}</p>
+      <p style={{ fontFamily: bodyFont, fontSize: 12, color: colors.muted, marginTop: 6 }}>{label}</p>
+    </div>
+  );
+}
+
+/* ============================== GUEST VIEW (public, via ?w=weddingId) ============================== */
+function GuestView({ weddingId }) {
+  const [wedding, setWedding] = useState(null);
+  const [loadingWedding, setLoadingWedding] = useState(true);
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [existingRsvp, setExistingRsvp] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [attending, setAttending] = useState(null);
+  const [count, setCount] = useState(1);
+  const [meals, setMeals] = useState([]);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    sb.from("weddings").select("*").eq("id", weddingId).single().then(({ data, error }) => {
+      setWedding(data || null);
+      setLoadingWedding(false);
+    });
+  }, [weddingId]);
+
+  if (loadingWedding) return <Frame><p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.text }}>Chargement…</p></Frame>;
+  if (!wedding) return <Frame><p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.danger }}>Ce lien de mariage est introuvable.</p></Frame>;
+
+  const isSingleMenu = wedding.meal_mode === "single";
+  const mealOptions = wedding.meal_options && wedding.meal_options.length > 0 ? wedding.meal_options : DEFAULT_MEAL_OPTIONS;
+
+  const search = async () => {
+    if (!query.trim()) return;
+    setLoading(true); setError(""); setMatches(null); setSelected(null);
+    const { data, error } = await sb.from("invites").select("*").eq("wedding_id", weddingId);
+    if (error) { setError("Impossible de charger la liste des invités."); setLoading(false); return; }
+    setMatches((data || []).filter((i) => fuzzyNameMatch(query, i.name)));
+    setLoading(false);
+  };
+
+  const choose = async (invite) => {
+    setSelected(invite); setLoading(true);
+    const { data } = await sb.from("rsvps").select("*").eq("invite_id", invite.id).maybeSingle();
+    if (data) {
+      setExistingRsvp(data);
+      setAttending(data.attending);
+      setCount(data.guest_count || 1);
+      setMeals(data.meals || []);
+    } else {
+      setExistingRsvp(null);
+      setAttending(null); setCount(1);
+      setMeals([isSingleMenu ? wedding.single_menu : mealOptions[0]]);
+    }
+    setSaved(false); setLoading(false);
+  };
+
+  const updateCount = (n) => {
+    const capped = Math.min(Math.max(1, n), selected.allotted);
+    setCount(capped);
+    setMeals((prev) => {
+      const next = [...prev];
+      const fill = isSingleMenu ? wedding.single_menu : mealOptions[0];
+      while (next.length < capped) next.push(fill);
+      return next.slice(0, capped);
+    });
+  };
+
+  const submit = async () => {
+    if (attending === null || !selected) return;
+    setLoading(true); setError("");
+    const resolvedMeals = isSingleMenu ? Array(count).fill(wedding.single_menu || "Menu unique") : meals;
+    const payload = { invite_id: selected.id, attending, guest_count: attending ? count : 0, meals: attending ? resolvedMeals : [], submitted_at: new Date().toISOString() };
+    const { error } = await sb.from("rsvps").upsert(payload, { onConflict: "invite_id" });
+    if (error) {
+      setError("La confirmation n'a pas pu être enregistrée (" + error.message + ").");
+    } else {
+      setMeals(resolvedMeals);
+      setSaved(true);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <Frame>
+      {wedding.announced && wedding.couple_names && (
+        <div style={{ textAlign: "center", marginBottom: 8 }}>
+          <p style={{ fontFamily: bodyFont, fontSize: 13, letterSpacing: "0.08em", color: colors.gold }}>Ils se marient</p>
+          <h2 style={{ fontFamily: serif, fontStyle: "italic", fontSize: 30, color: colors.navy, lineHeight: 1.2 }}>{wedding.couple_names}</h2>
+          {wedding.wedding_date && <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text }}>{wedding.wedding_date}</p>}
+          {wedding.message && <p style={{ fontFamily: bodyFont, fontSize: 14, fontStyle: "italic", color: colors.text, marginTop: 8 }}>{wedding.message}</p>}
+          {(wedding.venue_name || wedding.address) && (
+            <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, marginTop: 8 }}>
+              {wedding.venue_name}{wedding.venue_name && wedding.address ? " — " : ""}{wedding.address}
+            </p>
+          )}
+          {wedding.rsvp_deadline && (
+            <p style={{ fontFamily: bodyFont, fontSize: 13, color: isPastDeadline(wedding.rsvp_deadline) ? colors.danger : colors.gold, marginTop: 12 }}>
+              {isPastDeadline(wedding.rsvp_deadline) ? "La date limite de réponse est dépassée — merci de nous contacter directement." : `Merci de répondre avant le ${formatDateFr(wedding.rsvp_deadline)}`}
+            </p>
+          )}
+          <Divider />
+        </div>
+      )}
+
+      <h1 style={{ fontFamily: serif, fontSize: 32, color: colors.navy, textAlign: "center", margin: 0 }}>Confirmez votre présence</h1>
+      <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text, textAlign: "center", marginTop: 8 }}>Retrouvez votre nom pour répondre à notre invitation</p>
+      <Divider />
+
+      {!selected && (
+        <React.Fragment>
+          <Field label="Votre nom (ou celui du foyer invité)">
+            <TextInput value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="Ex. Famille Dubois" />
+          </Field>
+          <div style={{ textAlign: "center" }}><Button onClick={search} disabled={loading}>{loading ? "Recherche…" : "Rechercher"}</Button></div>
+          {error && <ErrorText>{error}</ErrorText>}
+          {matches && matches.length === 0 && <p style={{ fontFamily: bodyFont, color: colors.danger, fontSize: 15, textAlign: "center", marginTop: 24 }}>Aucune invitation ne correspond à ce nom.</p>}
+          {matches && matches.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              {matches.map((m) => (
+                <button key={m.id} onClick={() => choose(m)} style={{ ...inputStyle, display: "block", width: "100%", textAlign: "left", marginBottom: 8, cursor: "pointer", background: colors.card }}>{m.name}</button>
+              ))}
+            </div>
+          )}
+        </React.Fragment>
+      )}
+
+      {selected && !saved && (
+        <div>
+          <p style={{ fontFamily: serif, fontSize: 22, color: colors.navy, textAlign: "center" }}>{selected.name}</p>
+          <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, textAlign: "center", marginBottom: 24 }}>
+            {selected.allotted} place{selected.allotted > 1 ? "s" : ""} vous {selected.allotted > 1 ? "sont réservées" : "est réservée"}
+          </p>
+          <Field label="Serez-vous présent(e) ?">
+            <div style={{ display: "flex", gap: 12 }}>
+              <Button variant={attending === true ? "primary" : "ghost"} onClick={() => setAttending(true)}>J'y serai</Button>
+              <Button variant={attending === false ? "danger" : "ghost"} onClick={() => setAttending(false)}>Je ne pourrai pas venir</Button>
+            </div>
+          </Field>
+          {attending === true && (
+            <React.Fragment>
+              <Field label="Nombre de personnes présentes">
+                <Select value={count} onChange={(e) => updateCount(Number(e.target.value))}>
+                  {Array.from({ length: selected.allotted }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+                </Select>
+              </Field>
+              {isSingleMenu ? (
+                <div style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, background: "#FAF6F0", border: `1px solid ${colors.border}`, padding: "10px 12px", marginBottom: 20 }}>
+                  Menu prévu : {wedding.single_menu || "à préciser par les mariés"}
+                </div>
+              ) : (
+                Array.from({ length: count }).map((_, idx) => (
+                  <Field key={idx} label={`Choix du repas — personne ${idx + 1}`}>
+                    <Select value={meals[idx] || mealOptions[0]} onChange={(e) => { const next = [...meals]; next[idx] = e.target.value; setMeals(next); }}>
+                      {mealOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                    </Select>
+                  </Field>
+                ))
+              )}
+            </React.Fragment>
+          )}
+          <ErrorText>{error}</ErrorText>
+          <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 24 }}>
+            <Button variant="ghost" onClick={() => setSelected(null)}>Retour</Button>
+            <Button onClick={submit} disabled={attending === null || loading}>{loading ? "Envoi…" : "Confirmer ma réponse"}</Button>
+          </div>
+        </div>
+      )}
+
+      {selected && saved && (
+        <div style={{ textAlign: "center" }}>
+          <p style={{ fontFamily: serif, fontSize: 26, color: colors.navy }}>{attending ? "Merci pour votre réponse" : "Nous sommes désolés de votre absence"}</p>
+          {attending && (
+            <React.Fragment>
+              <Divider />
+              <p style={{ fontFamily: bodyFont, fontSize: 16, color: colors.navy }}>{selected.table_id ? "Votre table vous sera confirmée sur place" : "Votre table vous sera communiquée prochainement"}</p>
+              <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text }}>{count} personne{count > 1 ? "s" : ""} attendue{count > 1 ? "s" : ""}</p>
+              <ul style={{ listStyle: "none", padding: 0, marginTop: 12 }}>
+                {meals.map((m, i) => <li key={i} style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text }}>Personne {i + 1} — {m}</li>)}
+              </ul>
+            </React.Fragment>
+          )}
+          <div style={{ marginTop: 24 }}><Button variant="ghost" onClick={() => setSelected(null)}>Modifier ma réponse</Button></div>
+        </div>
+      )}
+    </Frame>
+  );
+}
+
+/* ============================== AUTH (organisateur) ============================== */
+function AuthView({ onLoggedIn }) {
+  const [mode, setMode] = useState("login"); // login | signup
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    setLoading(true); setError(""); setInfo("");
+    if (mode === "signup") {
+      const { data, error } = await sb.auth.signUp({ email, password });
+      if (error) setError(error.message);
+      else if (data.user && !data.session) setInfo("Compte créé ! Vérifiez votre email pour confirmer, puis connectez-vous.");
+      else onLoggedIn();
+    } else {
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) setError(error.message);
+      else onLoggedIn();
+    }
+    setLoading(false);
+  };
+
+  return (
+    <Frame>
+      <h2 style={{ fontFamily: serif, fontSize: 28, color: colors.navy, textAlign: "center", margin: 0 }}>Espace organisateurs</h2>
+      <Divider />
+      <Field label="Email">
+        <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      </Field>
+      <Field label="Mot de passe">
+        <TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      </Field>
+      {error && <ErrorText>{error}</ErrorText>}
+      {info && <p style={{ fontFamily: bodyFont, color: colors.success, fontSize: 14 }}>{info}</p>}
+      <div style={{ textAlign: "center", marginTop: 16 }}>
+        <Button onClick={submit} disabled={loading}>{loading ? "…" : mode === "signup" ? "Créer mon compte" : "Se connecter"}</Button>
+      </div>
+      <div style={{ textAlign: "center", marginTop: 16 }}>
+        <button onClick={() => setMode(mode === "signup" ? "login" : "signup")} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>
+          {mode === "signup" ? "Déjà un compte ? Se connecter" : "Pas encore de compte ? En créer un"}
+        </button>
+      </div>
+    </Frame>
+  );
+}
+
+/* ============================== SEATING PLAN ============================== */
+function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
+  const [tables, setTables] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedPartyId, setSelectedPartyId] = useState(null);
+  const [errorTableId, setErrorTableId] = useState(null);
+  const [newTableName, setNewTableName] = useState("");
+  const [newTableCap, setNewTableCap] = useState(8);
+  const errorTimeout = useRef(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const { data } = await sb.from("seating_tables").select("*").eq("wedding_id", weddingId);
+    setTables(data || []);
+    setLoading(false);
+  }, [weddingId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const flashError = (tableId) => {
+    setErrorTableId(tableId);
+    if (errorTimeout.current) clearTimeout(errorTimeout.current);
+    errorTimeout.current = setTimeout(() => setErrorTableId(null), 500);
+  };
+
+  const parties = invites
+    .filter((inv) => rsvps[inv.id] && rsvps[inv.id].attending)
+    .map((inv) => ({ id: inv.id, name: inv.name, size: rsvps[inv.id].guest_count, tableId: inv.table_id || null }));
+  const unassigned = parties.filter((p) => !p.tableId);
+
+  const addTable = async () => {
+    if (!newTableName.trim()) return;
+    await sb.from("seating_tables").insert({ wedding_id: weddingId, name: newTableName.trim(), capacity: Number(newTableCap) || 1 });
+    setNewTableName(""); setNewTableCap(8);
+    refresh();
+  };
+
+  const removeTable = async (tableId) => {
+    await sb.from("invites").update({ table_id: null }).eq("table_id", tableId);
+    await sb.from("seating_tables").delete().eq("id", tableId);
+    refreshInvites(); refresh();
+  };
+
+  const assignSelected = async (tableId) => {
+    if (!selectedPartyId) return;
+    const party = parties.find((p) => p.id === selectedPartyId);
+    const table = tables.find((t) => t.id === tableId);
+    if (!party || !table) return;
+    const used = parties.filter((p) => p.tableId === tableId).reduce((s, p) => s + p.size, 0);
+    if (used + party.size > table.capacity) { flashError(tableId); return; }
+    await sb.from("invites").update({ table_id: tableId }).eq("id", party.id);
+    setSelectedPartyId(null);
+    refreshInvites();
+  };
+
+  const unassignParty = async (party) => {
+    await sb.from("invites").update({ table_id: null }).eq("id", party.id);
+    refreshInvites();
+  };
+
+  const totalGuests = parties.reduce((s, p) => s + p.size, 0);
+  const seatedGuests = parties.filter((p) => p.tableId).reduce((s, p) => s + p.size, 0);
+  const totalCapacity = tables.reduce((s, t) => s + t.capacity, 0);
+
+  return (
+    <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+      <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 4 }}>Plan de table</p>
+      <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 16 }}>Les foyers confirmés apparaissent automatiquement. Sélectionnez-en un puis cliquez sur une table.</p>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <MetricCard label="À placer" value={totalGuests} />
+        <MetricCard label="Placés" value={seatedGuests} accent />
+        <MetricCard label="Capacité totale" value={totalCapacity} />
+      </div>
+      <div style={{ background: "#FAF6F0", border: `1px solid ${colors.border}`, padding: 14, marginBottom: 16 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.navy, marginBottom: 8 }}>À placer</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 28 }}>
+          {loading ? <span style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted }}>Chargement…</span>
+            : unassigned.length === 0 ? <span style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, fontStyle: "italic" }}>Tout le monde est placé.</span>
+            : unassigned.map((p) => (
+              <div key={p.id} onClick={() => setSelectedPartyId(selectedPartyId === p.id ? null : p.id)} style={{ fontFamily: bodyFont, fontSize: 13, padding: "5px 10px", background: selectedPartyId === p.id ? colors.navy : colors.card, color: selectedPartyId === p.id ? "#FAF6F0" : colors.navy, border: `1px solid ${selectedPartyId === p.id ? colors.navy : colors.borderStrong}`, cursor: "pointer" }}>
+                {p.name} ({p.size})
+              </div>
+            ))}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginBottom: 16 }}>
+        {tables.map((t) => {
+          const seated = parties.filter((p) => p.tableId === t.id);
+          const used = seated.reduce((s, p) => s + p.size, 0);
+          const full = used >= t.capacity;
+          return (
+            <div key={t.id} onClick={() => selectedPartyId && !full && assignSelected(t.id)} style={{ background: colors.card, border: `1px solid ${errorTableId === t.id ? colors.danger : full ? colors.gold : colors.border}`, padding: 14, cursor: selectedPartyId && !full ? "pointer" : "default", position: "relative" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontFamily: serif, fontSize: 17, color: colors.navy }}>{t.name}</span>
+                <span style={{ fontFamily: bodyFont, fontSize: 12, color: full ? colors.gold : colors.muted }}>{used}/{t.capacity}</span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, minHeight: 24 }}>
+                {seated.length === 0 && <span style={{ fontFamily: bodyFont, fontSize: 12, color: colors.muted, fontStyle: "italic" }}>Vide</span>}
+                {seated.map((p) => (
+                  <span key={p.id} onClick={(e) => { e.stopPropagation(); unassignParty(p); }} style={{ fontFamily: bodyFont, fontSize: 11, padding: "3px 6px", background: "#FAF6F0", border: `1px solid ${colors.borderStrong}`, cursor: "pointer" }}>{p.name} ({p.size})</span>
+                ))}
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); removeTable(t.id); }} style={{ position: "absolute", top: 6, right: 8, background: "none", border: "none", color: colors.muted, fontSize: 12, cursor: "pointer" }}>✕</button>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <TextInput value={newTableName} onChange={(e) => setNewTableName(e.target.value)} placeholder="Ex. Table 1" style={{ flex: "1 1 160px" }} onKeyDown={(e) => e.key === "Enter" && addTable()} />
+        <TextInput type="number" min={1} value={newTableCap} onChange={(e) => setNewTableCap(e.target.value)} style={{ width: 90 }} />
+        <Button small onClick={addTable}>Ajouter une table</Button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== ADMIN DASHBOARD ============================== */
+function AdminDashboard({ user, onLogout }) {
+  const [wedding, setWedding] = useState(null);
+  const [invites, setInvites] = useState([]);
+  const [rsvps, setRsvps] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState("");
+  const [allotted, setAllotted] = useState(2);
+  const [error, setError] = useState("");
+  const [savingInfo, setSavingInfo] = useState(false);
+  const [infoSaved, setInfoSaved] = useState(false);
+  const [editingMeals, setEditingMeals] = useState(false);
+  const [mealEdits, setMealEdits] = useState({});
+
+  const ensureWedding = useCallback(async () => {
+    const { data } = await sb.from("weddings").select("*").eq("organizer_id", user.id).limit(1);
+    if (data && data.length > 0) return data[0];
+    const { data: created } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
+    return created;
+  }, [user.id]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const w = wedding || await ensureWedding();
+    setWedding(w);
+    const { data: inv } = await sb.from("invites").select("*").eq("wedding_id", w.id);
+    setInvites(inv || []);
+    if (inv && inv.length > 0) {
+      const { data: rs } = await sb.from("rsvps").select("*").in("invite_id", inv.map((i) => i.id));
+      const map = {};
+      (rs || []).forEach((r) => { map[r.invite_id] = r; });
+      setRsvps(map);
+    } else {
+      setRsvps({});
+    }
+    setLoading(false);
+  }, [wedding, ensureWedding]);
+
+  useEffect(() => { refresh(); }, []); // eslint-disable-line
+
+  const updateWeddingField = (field, value) => {
+    setInfoSaved(false);
+    setWedding((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const currentMealOptions = wedding && wedding.meal_options && wedding.meal_options.length > 0 ? wedding.meal_options : DEFAULT_MEAL_OPTIONS;
+
+  const updateMealOption = (idx, value) => {
+    setInfoSaved(false);
+    setWedding((prev) => {
+      const next = [...(prev.meal_options && prev.meal_options.length > 0 ? prev.meal_options : DEFAULT_MEAL_OPTIONS)];
+      next[idx] = value;
+      return { ...prev, meal_options: next };
+    });
+  };
+  const addMealOption = () => {
+    setInfoSaved(false);
+    setWedding((prev) => {
+      const next = [...(prev.meal_options && prev.meal_options.length > 0 ? prev.meal_options : DEFAULT_MEAL_OPTIONS)];
+      next.push("Nouveau plat");
+      return { ...prev, meal_options: next };
+    });
+  };
+  const removeMealOption = (idx) => {
+    setInfoSaved(false);
+    setWedding((prev) => {
+      const next = [...(prev.meal_options && prev.meal_options.length > 0 ? prev.meal_options : DEFAULT_MEAL_OPTIONS)];
+      next.splice(idx, 1);
+      return { ...prev, meal_options: next.length > 0 ? next : DEFAULT_MEAL_OPTIONS };
+    });
+  };
+
+  const saveWedding = async () => {
+    setSavingInfo(true); setError("");
+    const payload = {
+      couple_names: wedding.couple_names, wedding_date: wedding.wedding_date, venue_name: wedding.venue_name,
+      address: wedding.address, message: wedding.message, rsvp_deadline: wedding.rsvp_deadline || null,
+      announced: true, meal_mode: wedding.meal_mode, meal_options: wedding.meal_options, single_menu: wedding.single_menu,
+      meal_overrides: wedding.meal_overrides || {},
+    };
+    const { error } = await sb.from("weddings").update(payload).eq("id", wedding.id);
+    if (error) setError("Échec de l'enregistrement (" + error.message + ").");
+    else setInfoSaved(true);
+    setSavingInfo(false);
+  };
+
+  const addInvite = async () => {
+    if (!name.trim()) return;
+    const { error } = await sb.from("invites").insert({ wedding_id: wedding.id, name: name.trim(), allotted: Number(allotted) });
+    if (error) { setError("L'ajout n'a pas pu être enregistré."); return; }
+    setName(""); setAllotted(2);
+    refresh();
+  };
+
+  const removeInvite = async (id) => {
+    await sb.from("invites").delete().eq("id", id);
+    refresh();
+  };
+
+  const confirmedCount = invites.reduce((s, inv) => { const r = rsvps[inv.id]; return s + (r && r.attending ? r.guest_count : 0); }, 0);
+
+  const mealSummary = (() => {
+    const counts = {};
+    invites.forEach((inv) => {
+      const r = rsvps[inv.id];
+      if (!r || !r.attending) return;
+      (r.meals || []).forEach((m) => { counts[m] = (counts[m] || 0) + 1; });
+    });
+    const overrides = (wedding && wedding.meal_overrides) || {};
+    Object.keys(overrides).forEach((label) => { if (!(label in counts)) counts[label] = 0; });
+    return Object.entries(counts).map(([label, calc]) => ({ label, count: overrides[label] !== undefined ? overrides[label] : calc, isOverridden: overrides[label] !== undefined && overrides[label] !== calc }));
+  })();
+
+  const startEditMeals = () => {
+    const initial = {};
+    mealSummary.forEach((m) => { initial[m.label] = String(m.count); });
+    setMealEdits(initial);
+    setEditingMeals(true);
+  };
+
+  const saveMealEdits = async () => {
+    const overrides = {};
+    Object.entries(mealEdits).forEach(([label, val]) => { const n = Number(val); if (!isNaN(n)) overrides[label] = n; });
+    const updated = { ...wedding, meal_overrides: overrides };
+    setWedding(updated);
+    await sb.from("weddings").update({ meal_overrides: overrides }).eq("id", wedding.id);
+    setEditingMeals(false);
+  };
+
+  if (loading || !wedding) return <p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.text }}>Chargement…</p>;
+
+  const guestLink = window.location.origin + window.location.pathname + "?w=" + wedding.id;
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h1 style={{ fontFamily: serif, fontSize: 28, color: colors.navy, margin: 0 }}>Tableau des invités</h1>
+        <button onClick={onLogout} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Se déconnecter</button>
+      </div>
+
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 14, marginBottom: 20 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.navy, marginBottom: 4 }}>Lien à partager avec vos invités :</p>
+        <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, wordBreak: "break-all" }}>{guestLink}</p>
+      </div>
+
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Annonce du mariage &amp; lieu de réception</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ flex: "1 1 220px" }}><Field label="Noms des mariés"><TextInput value={wedding.couple_names || ""} onChange={(e) => updateWeddingField("couple_names", e.target.value)} /></Field></div>
+          <div style={{ flex: "1 1 160px" }}><Field label="Date"><TextInput value={wedding.wedding_date || ""} onChange={(e) => updateWeddingField("wedding_date", e.target.value)} placeholder="Samedi 12 juin 2027" /></Field></div>
+          <div style={{ flex: "1 1 220px" }}><Field label="Nom de la salle"><TextInput value={wedding.venue_name || ""} onChange={(e) => updateWeddingField("venue_name", e.target.value)} /></Field></div>
+          <div style={{ flex: "1 1 260px" }}><Field label="Adresse"><TextInput value={wedding.address || ""} onChange={(e) => updateWeddingField("address", e.target.value)} /></Field></div>
+          <div style={{ flex: "1 1 100%" }}><Field label="Petit mot aux invités"><TextInput value={wedding.message || ""} onChange={(e) => updateWeddingField("message", e.target.value)} /></Field></div>
+          <div style={{ flex: "1 1 200px" }}><Field label="Date limite de réponse"><TextInput type="date" value={wedding.rsvp_deadline || ""} onChange={(e) => updateWeddingField("rsvp_deadline", e.target.value)} /></Field></div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Button onClick={saveWedding} disabled={savingInfo}>{savingInfo ? "Enregistrement…" : "Enregistrer et annoncer"}</Button>
+          {infoSaved && <span style={{ fontFamily: bodyFont, fontSize: 13, color: colors.success }}>Enregistré.</span>}
+        </div>
+        <ErrorText>{error}</ErrorText>
+      </div>
+
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Configuration des repas</p>
+        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          <Button variant={wedding.meal_mode !== "single" ? "primary" : "ghost"} onClick={() => updateWeddingField("meal_mode", "choice")}>Plusieurs plats au choix</Button>
+          <Button variant={wedding.meal_mode === "single" ? "primary" : "ghost"} onClick={() => updateWeddingField("meal_mode", "single")}>Menu unique</Button>
+        </div>
+        {wedding.meal_mode === "single" ? (
+          <Field label="Menu proposé"><TextInput value={wedding.single_menu || ""} onChange={(e) => updateWeddingField("single_menu", e.target.value)} /></Field>
+        ) : (
+          <React.Fragment>
+            {currentMealOptions.map((opt, idx) => (
+              <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <TextInput value={opt} onChange={(e) => updateMealOption(idx, e.target.value)} />
+                <Button variant="danger" onClick={() => removeMealOption(idx)}>✕</Button>
+              </div>
+            ))}
+            <Button variant="ghost" onClick={addMealOption}>+ Ajouter un plat</Button>
+          </React.Fragment>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+          <Button onClick={saveWedding} disabled={savingInfo}>{savingInfo ? "Enregistrement…" : "Enregistrer"}</Button>
+        </div>
+      </div>
+
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Ajouter une invitation</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+          <div style={{ flex: "1 1 180px" }}><Field label="Nom du foyer"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field></div>
+          <div style={{ width: 130 }}><Field label="Nombre attribué"><TextInput type="number" min={1} value={allotted} onChange={(e) => setAllotted(e.target.value)} /></Field></div>
+          <div style={{ marginBottom: 20 }}><Button onClick={addInvite}>Ajouter</Button></div>
+        </div>
+      </div>
+
+      <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>
+        {confirmedCount} convive(s) confirmé(s) sur {invites.reduce((s, i) => s + i.allotted, 0)} places allouées
+      </p>
+
+      {mealSummary.length > 0 && (
+        <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: "16px 20px", marginBottom: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.navy }}>Récapitulatif des repas à transmettre au traiteur</p>
+            {!editingMeals && <button onClick={startEditMeals} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Modifier</button>}
+          </div>
+          {!editingMeals && mealSummary.map((m) => (
+            <div key={m.label} style={{ display: "flex", justifyContent: "space-between", fontFamily: bodyFont, fontSize: 14, color: colors.text }}>
+              <span>{m.label}{m.isOverridden && <span style={{ color: colors.gold, fontSize: 12 }}> (ajusté)</span>}</span>
+              <span style={{ color: colors.navy }}>{m.count}</span>
+            </div>
+          ))}
+          {editingMeals && (
+            <React.Fragment>
+              {mealSummary.map((m) => (
+                <div key={m.label} style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                  <span style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text }}>{m.label}</span>
+                  <TextInput type="number" min={0} style={{ width: 90 }} value={mealEdits[m.label] !== undefined ? mealEdits[m.label] : m.count} onChange={(e) => setMealEdits((prev) => ({ ...prev, [m.label]: e.target.value }))} />
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+                <Button variant="ghost" onClick={() => setEditingMeals(false)}>Annuler</Button>
+                <Button onClick={saveMealEdits}>Enregistrer</Button>
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+      )}
+
+      <div style={{ border: `1px solid ${colors.border}`, marginBottom: 24 }}>
+        {invites.length === 0 && <p style={{ fontFamily: bodyFont, color: colors.text, textAlign: "center", padding: 24 }}>Aucune invitation ajoutée.</p>}
+        {invites.map((inv) => {
+          const r = rsvps[inv.id];
+          return (
+            <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, padding: 16, borderBottom: `1px solid ${colors.border}`, fontFamily: bodyFont }}>
+              <div>
+                <p style={{ color: colors.navy, fontSize: 16, margin: 0 }}>{inv.name}</p>
+                <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>{inv.allotted} place{inv.allotted > 1 ? "s" : ""} attribuée{inv.allotted > 1 ? "s" : ""}</p>
+                {r ? (r.attending ? <p style={{ color: colors.success, fontSize: 13, margin: 0 }}>Présent · {r.guest_count} pers. — {(r.meals || []).join(", ")}</p> : <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>Absent</p>)
+                  : isPastDeadline(wedding.rsvp_deadline) ? <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>En retard</p> : <p style={{ color: colors.gold, fontSize: 13, margin: 0 }}>En attente</p>}
+              </div>
+              <Button variant="danger" onClick={() => removeInvite(inv.id)}>Retirer</Button>
+            </div>
+          );
+        })}
+      </div>
+
+      <SeatingPlan weddingId={wedding.id} invites={invites} rsvps={rsvps} refreshInvites={refresh} />
+    </div>
+  );
+}
+
+/* ============================== ROOT ============================== */
+function App() {
+  const params = new URLSearchParams(window.location.search);
+  const weddingId = params.get("w");
+  const [session, setSession] = useState(undefined);
+
+  useEffect(() => {
+    if (weddingId) return;
+    sb.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = sb.auth.onAuthStateChange((_event, sess) => setSession(sess));
+    return () => listener.subscription.unsubscribe();
+  }, [weddingId]);
+
+  return (
+    <div style={{ minHeight: "100vh", background: colors.bg, padding: "40px 16px" }}>
+      {weddingId ? (
+        <GuestView weddingId={weddingId} />
+      ) : session === undefined ? (
+        <p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.text }}>Chargement…</p>
+      ) : session ? (
+        <AdminDashboard user={session.user} onLogout={() => sb.auth.signOut()} />
+      ) : (
+        <AuthView onLoggedIn={() => {}} />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
