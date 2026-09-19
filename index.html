@@ -205,13 +205,6 @@ function GuestView({ weddingId }) {
   const [showPractical, setShowPractical] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
-  const [openName, setOpenName] = useState("");
-  const [openCount, setOpenCount] = useState(1);
-  const [openMeals, setOpenMeals] = useState([]);
-  const [openAllergies, setOpenAllergies] = useState("");
-  const [openChildrenCount, setOpenChildrenCount] = useState(0);
-  const [openActivityNotes, setOpenActivityNotes] = useState("");
-  const [openMemberNames, setOpenMemberNames] = useState("");
 
   useEffect(() => {
     sb.from("weddings").select("*").eq("id", weddingId).single().then(({ data, error }) => {
@@ -227,58 +220,13 @@ function GuestView({ weddingId }) {
   const mealOptions = wedding.meal_options && wedding.meal_options.length > 0 ? wedding.meal_options : DEFAULT_MEAL_OPTIONS;
   const deadlinePassed = isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time);
 
-  const updateOpenCount = (n) => {
-    const capped = Math.max(1, n);
-    setOpenCount(capped);
-    setOpenMeals((prev) => {
-      const next = [...prev];
-      const fill = isSingleMenu ? wedding.single_menu : mealOptions[0];
-      while (next.length < capped) next.push(fill);
-      return next.slice(0, capped);
-    });
-  };
-
-  const submitOpen = async () => {
-    if (!openName.trim()) return;
+  const registerNew = async () => {
+    if (!query.trim()) return;
     setLoading(true); setError("");
-    const resolvedMeals = isSingleMenu
-      ? Array(openCount).fill(wedding.single_menu || "Menu unique")
-      : Array.from({ length: openCount }, (_, i) => openMeals[i] || mealOptions[0]);
-    try {
-      const { data: allInvites } = await sb.from("invites").select("*").eq("wedding_id", weddingId);
-      const candidates = (allInvites || []).filter((inv) => fuzzyNameMatch(openName, inv.name));
-      // En cas de plusieurs correspondances proches, on garde la plus ressemblante
-      candidates.sort((a, b) => levenshtein(normalizeText(openName), normalizeText(a.name)) - levenshtein(normalizeText(openName), normalizeText(b.name)));
-      let invite = candidates[0] || null;
-      if (invite) {
-        await sb.from("invites").update({ allotted: openCount }).eq("id", invite.id);
-      } else {
-        const { data: created, error: createErr } = await sb.from("invites").insert({ wedding_id: weddingId, name: openName.trim(), allotted: openCount }).select().single();
-        if (createErr) { setError("Inscription impossible (" + createErr.message + ")."); setLoading(false); return; }
-        invite = created;
-      }
-      const payload = {
-        invite_id: invite.id, attending: true, guest_count: openCount, meals: resolvedMeals,
-        member_names: openMemberNames.trim(), allergies: openAllergies.trim(),
-        children_count: Number(openChildrenCount) || 0, activity_notes: openActivityNotes.trim(),
-        submitted_at: new Date().toISOString(),
-      };
-      const { error: rsvpErr } = await sb.from("rsvps").upsert(payload, { onConflict: "invite_id" });
-      if (rsvpErr) { setError("La confirmation n'a pas pu être enregistrée (" + rsvpErr.message + ")."); setLoading(false); return; }
-      setSelected(invite);
-      setCount(openCount);
-      setMeals(resolvedMeals);
-      setMemberNames(openMemberNames.trim());
-      setAllergies(openAllergies.trim());
-      setChildrenCount(Number(openChildrenCount) || 0);
-      setActivityNotes(openActivityNotes.trim());
-      setAttending(true);
-      setSaved(true);
-    } catch (e) {
-      setError("Une erreur est survenue. Réessayez.");
-    } finally {
-      setLoading(false);
-    }
+    const { data: created, error: createErr } = await sb.from("invites").insert({ wedding_id: weddingId, name: query.trim(), allotted: 20 }).select().single();
+    if (createErr) { setError("Inscription impossible (" + createErr.message + ")."); setLoading(false); return; }
+    await choose(created);
+    setLoading(false);
   };
 
   const search = async () => {
@@ -313,7 +261,7 @@ function GuestView({ weddingId }) {
   };
 
   const updateCount = (n) => {
-    const capped = Math.min(Math.max(1, n), selected.allotted);
+    const capped = wedding.open_mode ? Math.max(1, n) : Math.min(Math.max(1, n), selected.allotted);
     setCount(capped);
     setMeals((prev) => {
       const next = [...prev];
@@ -338,6 +286,9 @@ function GuestView({ weddingId }) {
     if (error) {
       setError("La confirmation n'a pas pu être enregistrée (" + error.message + ").");
     } else {
+      if (wedding.open_mode && attending) {
+        await sb.from("invites").update({ allotted: count }).eq("id", selected.id);
+      }
       setMeals(resolvedMeals);
       setSaved(true);
     }
@@ -382,61 +333,34 @@ function GuestView({ weddingId }) {
         </p>
       )}
 
-      {!selected && !deadlinePassed && wedding.open_mode && (
-        <React.Fragment>
-          <Field label="Votre nom (ou celui du foyer)">
-            <TextInput value={openName} onChange={(e) => setOpenName(e.target.value)} placeholder="Ex. Famille Dubois" />
-          </Field>
-          <Field label="Nombre de personnes présentes">
-            <TextInput type="number" min={1} max={30} value={openCount} onChange={(e) => updateOpenCount(Math.max(1, Number(e.target.value) || 1))} />
-          </Field>
-          {isSingleMenu ? (
-            <div style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, background: "#FAF6F0", border: `1px solid ${colors.border}`, padding: "10px 12px", marginBottom: 20 }}>
-              Menu prévu : {wedding.single_menu || "à préciser par les mariés"}
-            </div>
-          ) : (
-            Array.from({ length: openCount }).map((_, idx) => (
-              <Field key={idx} label={`Choix du repas — personne ${idx + 1}`}>
-                <Select value={openMeals[idx] || mealOptions[0]} onChange={(e) => { const next = [...openMeals]; next[idx] = e.target.value; setOpenMeals(next); }}>
-                  {mealOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                </Select>
-              </Field>
-            ))
-          )}
-          <Field label="Qui vient exactement ? (facultatif)">
-            <TextInput value={openMemberNames} onChange={(e) => setOpenMemberNames(e.target.value)} placeholder="Ex. Richard, Sophie, Léo" />
-          </Field>
-          <Field label="Allergies ou régime particulier (facultatif)">
-            <TextInput value={openAllergies} onChange={(e) => setOpenAllergies(e.target.value)} placeholder="Ex. allergie aux fruits à coque, sans gluten" />
-          </Field>
-          <Field label="Dont nombre d'enfants">
-            <TextInput type="number" min={0} max={openCount} value={openChildrenCount} onChange={(e) => setOpenChildrenCount(Math.max(0, Math.min(openCount, Number(e.target.value) || 0)))} />
-          </Field>
-          {openChildrenCount > 0 && (
-            <Field label="Besoin d'une activité/animation pour les enfants ? (facultatif)">
-              <TextInput value={openActivityNotes} onChange={(e) => setOpenActivityNotes(e.target.value)} placeholder="Ex. garde d'enfants souhaitée, coin jeux" />
-            </Field>
-          )}
-          {error && <ErrorText>{error}</ErrorText>}
-          <div style={{ textAlign: "center" }}>
-            <Button onClick={submitOpen} disabled={loading || !openName.trim()}>{loading ? "Envoi…" : "Confirmer ma présence"}</Button>
-          </div>
-        </React.Fragment>
-      )}
-
-      {!selected && !deadlinePassed && !wedding.open_mode && (
+      {!selected && !deadlinePassed && (
         <React.Fragment>
           <Field label="Votre nom (ou celui du foyer invité)">
             <TextInput value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="Ex. Famille Dubois" />
           </Field>
           <div style={{ textAlign: "center" }}><Button onClick={search} disabled={loading}>{loading ? "Recherche…" : "Rechercher"}</Button></div>
           {error && <ErrorText>{error}</ErrorText>}
-          {matches && matches.length === 0 && <p style={{ fontFamily: bodyFont, color: colors.danger, fontSize: 15, textAlign: "center", marginTop: 24 }}>Aucune invitation ne correspond à ce nom.</p>}
+          {matches && matches.length === 0 && (
+            <div style={{ textAlign: "center", marginTop: 24 }}>
+              <p style={{ fontFamily: bodyFont, color: colors.danger, fontSize: 15 }}>
+                Aucune invitation ne correspond à ce nom{wedding.open_mode ? "." : " — vérifiez l'orthographe ou contactez les mariés."}
+              </p>
+              {wedding.open_mode && (
+                <Button onClick={registerNew} disabled={loading}>{loading ? "…" : `Créer une nouvelle invitation pour "${query.trim()}"`}</Button>
+              )}
+            </div>
+          )}
           {matches && matches.length > 0 && (
             <div style={{ marginTop: 24 }}>
+              <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, marginBottom: 8 }}>Sélectionnez votre nom :</p>
               {matches.map((m) => (
                 <button key={m.id} onClick={() => choose(m)} style={{ ...inputStyle, display: "block", width: "100%", textAlign: "left", marginBottom: 8, cursor: "pointer", background: colors.card }}>{m.name}</button>
               ))}
+              {wedding.open_mode && (
+                <button onClick={registerNew} disabled={loading} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", marginTop: 8 }}>
+                  Aucun de ces noms n'est le mien, créer une nouvelle invitation
+                </button>
+              )}
             </div>
           )}
         </React.Fragment>
@@ -445,9 +369,11 @@ function GuestView({ weddingId }) {
       {selected && !saved && (
         <div>
           <p style={{ fontFamily: serif, fontSize: 22, color: colors.navy, textAlign: "center" }}>{selected.name}</p>
-          <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, textAlign: "center", marginBottom: 24 }}>
-            {selected.allotted} place{selected.allotted > 1 ? "s" : ""} vous {selected.allotted > 1 ? "sont réservées" : "est réservée"}
-          </p>
+          {!wedding.open_mode && (
+            <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, textAlign: "center", marginBottom: 24 }}>
+              {selected.allotted} place{selected.allotted > 1 ? "s" : ""} vous {selected.allotted > 1 ? "sont réservées" : "est réservée"}
+            </p>
+          )}
           <Field label="Serez-vous présent(e) ?">
             <div style={{ display: "flex", gap: 12 }}>
               <Button variant={attending === true ? "primary" : "ghost"} onClick={() => setAttending(true)}>J'y serai</Button>
@@ -457,9 +383,13 @@ function GuestView({ weddingId }) {
           {attending === true && (
             <React.Fragment>
               <Field label="Nombre de personnes présentes">
-                <Select value={count} onChange={(e) => updateCount(Number(e.target.value))}>
-                  {Array.from({ length: selected.allotted }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
-                </Select>
+                {wedding.open_mode ? (
+                  <TextInput type="number" min={1} max={30} value={count} onChange={(e) => updateCount(Math.max(1, Number(e.target.value) || 1))} />
+                ) : (
+                  <Select value={count} onChange={(e) => updateCount(Number(e.target.value))}>
+                    {Array.from({ length: selected.allotted }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+                  </Select>
+                )}
               </Field>
               {isSingleMenu ? (
                 <div style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, background: "#FAF6F0", border: `1px solid ${colors.border}`, padding: "10px 12px", marginBottom: 20 }}>
