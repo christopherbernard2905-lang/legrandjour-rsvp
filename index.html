@@ -440,7 +440,7 @@ function GuestView({ weddingId }) {
               <ul style={{ listStyle: "none", padding: 0, marginTop: 12 }}>
                 {meals.map((m, i) => <li key={i} style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text }}>Personne {i + 1} — {m}</li>)}
               </ul>
-              {(wedding.parking_info || wedding.transport_info || wedding.hotel_info) && (
+              {(wedding.parking_info || wedding.transport_info || wedding.hotel_info || wedding.address || wedding.venue_name) && (
                 <div style={{ marginTop: 20 }}>
                   <Button onClick={() => setShowPractical(true)}>Infos pratiques (parking, transport, hôtel)</Button>
                 </div>
@@ -455,10 +455,19 @@ function GuestView({ weddingId }) {
         <div>
           <h2 style={{ fontFamily: serif, fontSize: 26, color: colors.navy, textAlign: "center", margin: 0 }}>Infos pratiques</h2>
           <Divider />
-          {wedding.parking_info && (
+          {(wedding.parking_info || wedding.address || wedding.venue_name) && (
             <div style={{ marginBottom: 20 }}>
               <p style={{ fontFamily: bodyFont, fontSize: 13, letterSpacing: "0.05em", color: colors.gold, marginBottom: 4 }}>PARKING</p>
-              <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text }}>{wedding.parking_info}</p>
+              {wedding.parking_info && <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text }}>{wedding.parking_info}</p>}
+              {(wedding.address || wedding.venue_name) && (
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent("parking " + (wedding.address || wedding.venue_name))}`}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ fontFamily: bodyFont, fontSize: 14, color: colors.gold, textDecoration: "underline" }}
+                >
+                  Voir les parkings à proximité sur Google Maps
+                </a>
+              )}
             </div>
           )}
           {wedding.transport_info && (
@@ -580,14 +589,41 @@ function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
     if (!party || !table) return;
     const used = parties.filter((p) => p.tableId === tableId).reduce((s, p) => s + p.size, 0);
     if (used + party.size > table.capacity) { flashError(tableId); return; }
+    const currentSeats = table.seat_assignments || {};
+    const occupied = new Set(Object.values(currentSeats).flat());
+    const freeSeats = [];
+    for (let n = 1; n <= table.capacity && freeSeats.length < party.size; n++) {
+      if (!occupied.has(n)) freeSeats.push(n);
+    }
+    const nextSeats = { ...currentSeats, [party.id]: freeSeats };
     await sb.from("invites").update({ table_id: tableId }).eq("id", party.id);
+    await sb.from("seating_tables").update({ seat_assignments: nextSeats }).eq("id", tableId);
     setSelectedPartyId(null);
     refreshInvites();
+    refresh();
   };
 
   const unassignParty = async (party) => {
     await sb.from("invites").update({ table_id: null }).eq("id", party.id);
+    if (party.tableId) {
+      const table = tables.find((t) => t.id === party.tableId);
+      if (table) {
+        const nextSeats = { ...(table.seat_assignments || {}) };
+        delete nextSeats[party.id];
+        await sb.from("seating_tables").update({ seat_assignments: nextSeats }).eq("id", table.id);
+      }
+    }
     refreshInvites();
+    refresh();
+  };
+
+  // Découpe "Richard, Sophie, Léo" en noms individuels pour étiqueter chaque chaise
+  const seatLabel = (party, seatIndexWithinParty) => {
+    if (party.memberNames) {
+      const names = party.memberNames.split(",").map((n) => n.trim()).filter(Boolean);
+      if (names.length === party.size && names[seatIndexWithinParty]) return names[seatIndexWithinParty];
+    }
+    return party.size > 1 ? `${party.name} (${seatIndexWithinParty + 1}/${party.size})` : party.name;
   };
 
   const totalGuests = parties.reduce((s, p) => s + p.size, 0);
@@ -628,10 +664,44 @@ function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, minHeight: 24 }}>
                 {seated.length === 0 && <span style={{ fontFamily: bodyFont, fontSize: 12, color: colors.muted, fontStyle: "italic" }}>Vide</span>}
-                {seated.map((p) => (
-                  <span key={p.id} title={p.memberNames || undefined} onClick={(e) => { e.stopPropagation(); unassignParty(p); }} style={{ fontFamily: bodyFont, fontSize: 11, padding: "3px 6px", background: "#FAF6F0", border: `1px solid ${colors.borderStrong}`, cursor: "pointer" }}>{p.name} ({p.size})</span>
-                ))}
+                {Array.from({ length: t.capacity }, (_, i) => i + 1).map((seatNum) => {
+                  const seats = t.seat_assignments || {};
+                  const occupantId = Object.keys(seats).find((pid) => (seats[pid] || []).includes(seatNum));
+                  const occupant = occupantId ? seated.find((p) => p.id === occupantId) : null;
+                  const seatIndexWithinParty = occupant ? (seats[occupant.id] || []).indexOf(seatNum) : -1;
+                  return (
+                    <span
+                      key={seatNum}
+                      title={occupant ? seatLabel(occupant, seatIndexWithinParty) : "Chaise libre"}
+                      onClick={occupant ? (e) => { e.stopPropagation(); unassignParty(occupant); } : undefined}
+                      style={{
+                        fontFamily: bodyFont, fontSize: 10, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                        background: occupant ? "#FAF6F0" : "transparent", border: `1px solid ${occupant ? colors.borderStrong : colors.border}`,
+                        borderRadius: "50%", color: occupant ? colors.navy : colors.muted, cursor: occupant ? "pointer" : "default",
+                      }}
+                    >
+                      {seatNum}
+                    </span>
+                  );
+                })}
               </div>
+              {seated.length > 0 && (
+                <ul style={{ listStyle: "none", padding: 0, marginTop: 8, marginBottom: 0 }}>
+                  {Array.from({ length: t.capacity }, (_, i) => i + 1).map((seatNum) => {
+                    const seats = t.seat_assignments || {};
+                    const occupantId = Object.keys(seats).find((pid) => (seats[pid] || []).includes(seatNum));
+                    if (!occupantId) return null;
+                    const occupant = seated.find((p) => p.id === occupantId);
+                    if (!occupant) return null;
+                    const idx = (seats[occupant.id] || []).indexOf(seatNum);
+                    return (
+                      <li key={seatNum} style={{ fontFamily: bodyFont, fontSize: 11, color: colors.text }}>
+                        Chaise {seatNum} — {seatLabel(occupant, idx)}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
               <button onClick={(e) => { e.stopPropagation(); removeTable(t.id); }} style={{ position: "absolute", top: 6, right: 8, background: "none", border: "none", color: colors.muted, fontSize: 12, cursor: "pointer" }}>✕</button>
             </div>
           );
@@ -647,7 +717,7 @@ function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
 }
 
 /* ============================== ADMIN DASHBOARD ============================== */
-function AdminDashboard({ weddingId, onLogout, onBack }) {
+function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
   const [wedding, setWedding] = useState(null);
   const [invites, setInvites] = useState([]);
   const [rsvps, setRsvps] = useState({});
@@ -662,6 +732,30 @@ function AdminDashboard({ weddingId, onLogout, onBack }) {
   const [infoSaved, setInfoSaved] = useState(false);
   const [editingMeals, setEditingMeals] = useState(false);
   const [mealEdits, setMealEdits] = useState({});
+  const [collaborators, setCollaborators] = useState([]);
+  const [newCollabEmail, setNewCollabEmail] = useState("");
+  const [collabError, setCollabError] = useState("");
+
+  const isOwner = wedding && currentUser && wedding.organizer_id === currentUser.id;
+
+  const refreshCollaborators = useCallback(async () => {
+    const { data } = await sb.from("wedding_collaborators").select("*").eq("wedding_id", weddingId);
+    setCollaborators(data || []);
+  }, [weddingId]);
+
+  const addCollaborator = async () => {
+    if (!newCollabEmail.trim()) return;
+    setCollabError("");
+    const { error } = await sb.from("wedding_collaborators").insert({ wedding_id: weddingId, email: newCollabEmail.trim().toLowerCase() });
+    if (error) { setCollabError("Impossible d'ajouter cet accès (" + error.message + ")."); return; }
+    setNewCollabEmail("");
+    refreshCollaborators();
+  };
+
+  const removeCollaborator = async (id) => {
+    await sb.from("wedding_collaborators").delete().eq("id", id);
+    refreshCollaborators();
+  };
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -680,7 +774,7 @@ function AdminDashboard({ weddingId, onLogout, onBack }) {
     setLoading(false);
   }, [weddingId]);
 
-  useEffect(() => { refresh(); }, []); // eslint-disable-line
+  useEffect(() => { refresh(); refreshCollaborators(); }, []); // eslint-disable-line
 
   const updateWeddingField = (field, value) => {
     setInfoSaved(false);
@@ -813,6 +907,26 @@ function AdminDashboard({ weddingId, onLogout, onBack }) {
         <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.navy, marginBottom: 4 }}>Lien à partager avec vos invités :</p>
         <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, wordBreak: "break-all" }}>{guestLink}</p>
       </div>
+
+      {isOwner && (
+        <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+          <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 4 }}>Collaborateurs</p>
+          <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 12 }}>
+            Donnez accès à ce mariage à une autre personne (les mariés, par exemple) — elle devra créer un compte avec cet email pour s'y connecter.
+          </p>
+          {collaborators.map((c) => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${colors.border}` }}>
+              <span style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text }}>{c.email}</span>
+              <button onClick={() => removeCollaborator(c.id)} style={{ fontFamily: bodyFont, fontSize: 12, color: colors.danger, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Retirer</button>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <TextInput type="email" value={newCollabEmail} onChange={(e) => setNewCollabEmail(e.target.value)} placeholder="email@exemple.com" style={{ flex: "1 1 200px" }} onKeyDown={(e) => e.key === "Enter" && addCollaborator()} />
+            <Button small onClick={addCollaborator}>Inviter</Button>
+          </div>
+          <ErrorText>{collabError}</ErrorText>
+        </div>
+      )}
 
       <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
         <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Annonce du mariage &amp; lieu de réception</p>
@@ -986,10 +1100,21 @@ function OrganizerHome({ user, onLogout }) {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const { data } = await sb.from("weddings").select("*").eq("organizer_id", user.id).order("created_at", { ascending: false });
-    setWeddings(data || []);
+    const { data: owned } = await sb.from("weddings").select("*").eq("organizer_id", user.id).order("created_at", { ascending: false });
+    let collabWeddings = [];
+    if (user.email) {
+      const { data: collabRows } = await sb.from("wedding_collaborators").select("wedding_id").eq("email", user.email);
+      const ids = (collabRows || []).map((r) => r.wedding_id);
+      if (ids.length > 0) {
+        const { data: cw } = await sb.from("weddings").select("*").in("id", ids);
+        collabWeddings = cw || [];
+      }
+    }
+    const merged = [...(owned || [])];
+    collabWeddings.forEach((w) => { if (!merged.some((m) => m.id === w.id)) merged.push(w); });
+    setWeddings(merged);
     setLoading(false);
-  }, [user.id]);
+  }, [user.id, user.email]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -1009,7 +1134,7 @@ function OrganizerHome({ user, onLogout }) {
   };
 
   if (selectedId) {
-    return <AdminDashboard weddingId={selectedId} onLogout={onLogout} onBack={() => { setSelectedId(null); refresh(); }} />;
+    return <AdminDashboard weddingId={selectedId} currentUser={user} onLogout={onLogout} onBack={() => { setSelectedId(null); refresh(); }} />;
   }
 
   return (
