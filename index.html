@@ -1121,7 +1121,7 @@ function OrganizerHome({ user, onLogout }) {
   const createWedding = async () => {
     setCreating(true); setError("");
     const { data, error } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
-    if (error) { setError("Impossible de créer un nouveau mariage."); setCreating(false); return; }
+    if (error) { setError("Impossible de créer un nouveau mariage (" + error.message + ")."); setCreating(false); return; }
     setCreating(false);
     setSelectedId(data.id);
   };
