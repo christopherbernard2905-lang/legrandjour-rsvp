@@ -199,11 +199,18 @@ function GuestView({ weddingId }) {
   const [count, setCount] = useState(1);
   const [meals, setMeals] = useState([]);
   const [memberNames, setMemberNames] = useState("");
+  const [allergies, setAllergies] = useState("");
+  const [childrenCount, setChildrenCount] = useState(0);
+  const [activityNotes, setActivityNotes] = useState("");
+  const [showPractical, setShowPractical] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [openName, setOpenName] = useState("");
   const [openCount, setOpenCount] = useState(1);
   const [openMeals, setOpenMeals] = useState([]);
+  const [openAllergies, setOpenAllergies] = useState("");
+  const [openChildrenCount, setOpenChildrenCount] = useState(0);
+  const [openActivityNotes, setOpenActivityNotes] = useState("");
   const [openMemberNames, setOpenMemberNames] = useState("");
 
   useEffect(() => {
@@ -247,13 +254,21 @@ function GuestView({ weddingId }) {
         if (createErr) { setError("Inscription impossible (" + createErr.message + ")."); setLoading(false); return; }
         invite = created;
       }
-      const payload = { invite_id: invite.id, attending: true, guest_count: openCount, meals: resolvedMeals, member_names: openMemberNames.trim(), submitted_at: new Date().toISOString() };
+      const payload = {
+        invite_id: invite.id, attending: true, guest_count: openCount, meals: resolvedMeals,
+        member_names: openMemberNames.trim(), allergies: openAllergies.trim(),
+        children_count: Number(openChildrenCount) || 0, activity_notes: openActivityNotes.trim(),
+        submitted_at: new Date().toISOString(),
+      };
       const { error: rsvpErr } = await sb.from("rsvps").upsert(payload, { onConflict: "invite_id" });
       if (rsvpErr) { setError("La confirmation n'a pas pu être enregistrée (" + rsvpErr.message + ")."); setLoading(false); return; }
       setSelected(invite);
       setCount(openCount);
       setMeals(resolvedMeals);
       setMemberNames(openMemberNames.trim());
+      setAllergies(openAllergies.trim());
+      setChildrenCount(Number(openChildrenCount) || 0);
+      setActivityNotes(openActivityNotes.trim());
       setAttending(true);
       setSaved(true);
     } catch (e) {
@@ -281,11 +296,15 @@ function GuestView({ weddingId }) {
       setCount(data.guest_count || 1);
       setMeals(data.meals || []);
       setMemberNames(data.member_names || "");
+      setAllergies(data.allergies || "");
+      setChildrenCount(data.children_count || 0);
+      setActivityNotes(data.activity_notes || "");
     } else {
       setExistingRsvp(null);
       setAttending(null); setCount(1);
       setMeals([isSingleMenu ? wedding.single_menu : mealOptions[0]]);
       setMemberNames("");
+      setAllergies(""); setChildrenCount(0); setActivityNotes("");
     }
     setSaved(false); setLoading(false);
   };
@@ -299,13 +318,19 @@ function GuestView({ weddingId }) {
       while (next.length < capped) next.push(fill);
       return next.slice(0, capped);
     });
+    if (childrenCount > capped) setChildrenCount(capped);
   };
 
   const submit = async () => {
     if (attending === null || !selected) return;
     setLoading(true); setError("");
     const resolvedMeals = isSingleMenu ? Array(count).fill(wedding.single_menu || "Menu unique") : meals;
-    const payload = { invite_id: selected.id, attending, guest_count: attending ? count : 0, meals: attending ? resolvedMeals : [], member_names: attending ? memberNames.trim() : "", submitted_at: new Date().toISOString() };
+    const payload = {
+      invite_id: selected.id, attending, guest_count: attending ? count : 0, meals: attending ? resolvedMeals : [],
+      member_names: attending ? memberNames.trim() : "", allergies: attending ? allergies.trim() : "",
+      children_count: attending ? Number(childrenCount) || 0 : 0, activity_notes: attending ? activityNotes.trim() : "",
+      submitted_at: new Date().toISOString(),
+    };
     const { error } = await sb.from("rsvps").upsert(payload, { onConflict: "invite_id" });
     if (error) {
       setError("La confirmation n'a pas pu être enregistrée (" + error.message + ").");
@@ -378,6 +403,17 @@ function GuestView({ weddingId }) {
           <Field label="Qui vient exactement ? (facultatif)">
             <TextInput value={openMemberNames} onChange={(e) => setOpenMemberNames(e.target.value)} placeholder="Ex. Richard, Sophie, Léo" />
           </Field>
+          <Field label="Allergies ou régime particulier (facultatif)">
+            <TextInput value={openAllergies} onChange={(e) => setOpenAllergies(e.target.value)} placeholder="Ex. allergie aux fruits à coque, sans gluten" />
+          </Field>
+          <Field label="Dont nombre d'enfants">
+            <TextInput type="number" min={0} max={openCount} value={openChildrenCount} onChange={(e) => setOpenChildrenCount(Math.max(0, Math.min(openCount, Number(e.target.value) || 0)))} />
+          </Field>
+          {openChildrenCount > 0 && (
+            <Field label="Besoin d'une activité/animation pour les enfants ? (facultatif)">
+              <TextInput value={openActivityNotes} onChange={(e) => setOpenActivityNotes(e.target.value)} placeholder="Ex. garde d'enfants souhaitée, coin jeux" />
+            </Field>
+          )}
           {error && <ErrorText>{error}</ErrorText>}
           <div style={{ textAlign: "center" }}>
             <Button onClick={submitOpen} disabled={loading || !openName.trim()}>{loading ? "Envoi…" : "Confirmer ma présence"}</Button>
@@ -438,6 +474,17 @@ function GuestView({ weddingId }) {
               <Field label="Qui vient exactement ? (facultatif)">
                 <TextInput value={memberNames} onChange={(e) => setMemberNames(e.target.value)} placeholder="Ex. Richard, Sophie, Léo" />
               </Field>
+              <Field label="Allergies ou régime particulier (facultatif)">
+                <TextInput value={allergies} onChange={(e) => setAllergies(e.target.value)} placeholder="Ex. allergie aux fruits à coque, sans gluten" />
+              </Field>
+              <Field label="Dont nombre d'enfants">
+                <TextInput type="number" min={0} max={count} value={childrenCount} onChange={(e) => setChildrenCount(Math.max(0, Math.min(count, Number(e.target.value) || 0)))} />
+              </Field>
+              {childrenCount > 0 && (
+                <Field label="Besoin d'une activité/animation pour les enfants ? (facultatif)">
+                  <TextInput value={activityNotes} onChange={(e) => setActivityNotes(e.target.value)} placeholder="Ex. garde d'enfants souhaitée, coin jeux" />
+                </Field>
+              )}
             </React.Fragment>
           )}
           <ErrorText>{error}</ErrorText>
@@ -448,7 +495,7 @@ function GuestView({ weddingId }) {
         </div>
       )}
 
-      {selected && saved && (
+      {selected && saved && !showPractical && (
         <div style={{ textAlign: "center" }}>
           <p style={{ fontFamily: serif, fontSize: 26, color: colors.navy }}>{attending ? "Merci pour votre réponse" : "Nous sommes désolés de votre absence"}</p>
           {attending && (
@@ -460,9 +507,42 @@ function GuestView({ weddingId }) {
               <ul style={{ listStyle: "none", padding: 0, marginTop: 12 }}>
                 {meals.map((m, i) => <li key={i} style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text }}>Personne {i + 1} — {m}</li>)}
               </ul>
+              {(wedding.parking_info || wedding.transport_info || wedding.hotel_info) && (
+                <div style={{ marginTop: 20 }}>
+                  <Button onClick={() => setShowPractical(true)}>Infos pratiques (parking, transport, hôtel)</Button>
+                </div>
+              )}
             </React.Fragment>
           )}
           <div style={{ marginTop: 24 }}><Button variant="ghost" onClick={() => setSelected(null)}>Modifier ma réponse</Button></div>
+        </div>
+      )}
+
+      {selected && saved && showPractical && (
+        <div>
+          <h2 style={{ fontFamily: serif, fontSize: 26, color: colors.navy, textAlign: "center", margin: 0 }}>Infos pratiques</h2>
+          <Divider />
+          {wedding.parking_info && (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontFamily: bodyFont, fontSize: 13, letterSpacing: "0.05em", color: colors.gold, marginBottom: 4 }}>PARKING</p>
+              <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text }}>{wedding.parking_info}</p>
+            </div>
+          )}
+          {wedding.transport_info && (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontFamily: bodyFont, fontSize: 13, letterSpacing: "0.05em", color: colors.gold, marginBottom: 4 }}>TRANSPORT</p>
+              <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text }}>{wedding.transport_info}</p>
+            </div>
+          )}
+          {wedding.hotel_info && (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontFamily: bodyFont, fontSize: 13, letterSpacing: "0.05em", color: colors.gold, marginBottom: 4 }}>HÔTELS À PROXIMITÉ</p>
+              <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text }}>{wedding.hotel_info}</p>
+            </div>
+          )}
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <Button variant="ghost" onClick={() => setShowPractical(false)}>← Retour à la confirmation</Button>
+          </div>
         </div>
       )}
     </Frame>
@@ -634,7 +714,7 @@ function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
 }
 
 /* ============================== ADMIN DASHBOARD ============================== */
-function AdminDashboard({ user, onLogout }) {
+function AdminDashboard({ weddingId, onLogout, onBack }) {
   const [wedding, setWedding] = useState(null);
   const [invites, setInvites] = useState([]);
   const [rsvps, setRsvps] = useState({});
@@ -650,23 +730,11 @@ function AdminDashboard({ user, onLogout }) {
   const [editingMeals, setEditingMeals] = useState(false);
   const [mealEdits, setMealEdits] = useState({});
 
-  const ensureWedding = useCallback(async () => {
-    const { data } = await sb.from("weddings").select("*").eq("organizer_id", user.id).limit(1);
-    if (data && data.length > 0) return data[0];
-    const { data: created, error } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
-    if (error) {
-      // Une autre requête a créé la ligne entre-temps (grâce à la contrainte unique) — on la relit simplement.
-      const { data: existing } = await sb.from("weddings").select("*").eq("organizer_id", user.id).limit(1);
-      return existing && existing[0];
-    }
-    return created;
-  }, [user.id]);
-
   const refresh = useCallback(async () => {
     setLoading(true);
-    const w = wedding || await ensureWedding();
+    const { data: w } = await sb.from("weddings").select("*").eq("id", weddingId).single();
     setWedding(w);
-    const { data: inv } = await sb.from("invites").select("*").eq("wedding_id", w.id);
+    const { data: inv } = await sb.from("invites").select("*").eq("wedding_id", weddingId);
     setInvites(inv || []);
     if (inv && inv.length > 0) {
       const { data: rs } = await sb.from("rsvps").select("*").in("invite_id", inv.map((i) => i.id));
@@ -677,7 +745,7 @@ function AdminDashboard({ user, onLogout }) {
       setRsvps({});
     }
     setLoading(false);
-  }, [wedding, ensureWedding]);
+  }, [weddingId]);
 
   useEffect(() => { refresh(); }, []); // eslint-disable-line
 
@@ -721,6 +789,7 @@ function AdminDashboard({ user, onLogout }) {
       rsvp_deadline_time: wedding.rsvp_deadline_time || "23:59", open_mode: !!wedding.open_mode,
       announced: true, meal_mode: wedding.meal_mode, meal_options: wedding.meal_options, single_menu: wedding.single_menu,
       meal_overrides: wedding.meal_overrides || {},
+      parking_info: wedding.parking_info || "", transport_info: wedding.transport_info || "", hotel_info: wedding.hotel_info || "",
     };
     const { error } = await sb.from("weddings").update(payload).eq("id", wedding.id);
     if (error) setError("Échec de l'enregistrement (" + error.message + ").");
@@ -800,7 +869,10 @@ function AdminDashboard({ user, onLogout }) {
   return (
     <div style={{ maxWidth: 760, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h1 style={{ fontFamily: serif, fontSize: 28, color: colors.navy, margin: 0 }}>Tableau des invités</h1>
+        <div>
+          <button onClick={onBack} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", marginBottom: 4, display: "block" }}>← Retour à mes mariages</button>
+          <h1 style={{ fontFamily: serif, fontSize: 28, color: colors.navy, margin: 0 }}>Tableau des invités</h1>
+        </div>
         <button onClick={onLogout} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Se déconnecter</button>
       </div>
 
@@ -838,6 +910,19 @@ function AdminDashboard({ user, onLogout }) {
           <Button variant={wedding.open_mode ? "primary" : "ghost"} onClick={() => updateWeddingField("open_mode", true)}>Les invités s'inscrivent eux-mêmes</Button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+          <Button onClick={saveWedding} disabled={savingInfo}>{savingInfo ? "Enregistrement…" : "Enregistrer"}</Button>
+        </div>
+      </div>
+
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 8 }}>Infos pratiques</p>
+        <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 16 }}>
+          Affichées à l'invité juste après sa confirmation de présence.
+        </p>
+        <Field label="Parking à proximité"><TextInput value={wedding.parking_info || ""} onChange={(e) => updateWeddingField("parking_info", e.target.value)} placeholder="Ex. Parking gratuit sur place, 200 places" /></Field>
+        <Field label="Transport"><TextInput value={wedding.transport_info || ""} onChange={(e) => updateWeddingField("transport_info", e.target.value)} placeholder="Ex. Navette au départ de la gare à 17h" /></Field>
+        <Field label="Hôtels à proximité"><TextInput value={wedding.hotel_info || ""} onChange={(e) => updateWeddingField("hotel_info", e.target.value)} placeholder="Ex. Hôtel du Parc, à 5 min — code partenaire MARIAGE10" /></Field>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
           <Button onClick={saveWedding} disabled={savingInfo}>{savingInfo ? "Enregistrement…" : "Enregistrer"}</Button>
         </div>
       </div>
@@ -940,6 +1025,8 @@ function AdminDashboard({ user, onLogout }) {
                   <React.Fragment>
                     <p style={{ color: colors.success, fontSize: 13, margin: 0 }}>Présent · {r.guest_count} pers. — {(r.meals || []).join(", ")}</p>
                     {r.member_names && <p style={{ color: colors.muted, fontSize: 12, margin: 0, fontStyle: "italic" }}>{r.member_names}</p>}
+                    {r.allergies && <p style={{ color: colors.danger, fontSize: 12, margin: 0 }}>⚠ Allergies : {r.allergies}</p>}
+                    {r.children_count > 0 && <p style={{ color: colors.muted, fontSize: 12, margin: 0 }}>{r.children_count} enfant{r.children_count > 1 ? "s" : ""}{r.activity_notes ? " — " + r.activity_notes : ""}</p>}
                   </React.Fragment>
                 ) : <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>Absent</p>)
                   : isPastDeadline(wedding.rsvp_deadline, wedding.rsvp_deadline_time) ? <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>En retard</p> : <p style={{ color: colors.gold, fontSize: 13, margin: 0 }}>En attente</p>}
@@ -956,6 +1043,82 @@ function AdminDashboard({ user, onLogout }) {
 }
 
 /* ============================== ROOT ============================== */
+/* ============================== ORGANIZER HOME (liste des mariages) ============================== */
+function OrganizerHome({ user, onLogout }) {
+  const [weddings, setWeddings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState(null);
+  const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const { data } = await sb.from("weddings").select("*").eq("organizer_id", user.id).order("created_at", { ascending: false });
+    setWeddings(data || []);
+    setLoading(false);
+  }, [user.id]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const createWedding = async () => {
+    setCreating(true); setError("");
+    const { data, error } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
+    if (error) { setError("Impossible de créer un nouveau mariage."); setCreating(false); return; }
+    setCreating(false);
+    setSelectedId(data.id);
+  };
+
+  const deleteWedding = async (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm("Supprimer définitivement ce mariage et toutes ses données (invités, réponses, tables) ?")) return;
+    await sb.from("weddings").delete().eq("id", id);
+    refresh();
+  };
+
+  if (selectedId) {
+    return <AdminDashboard weddingId={selectedId} onLogout={onLogout} onBack={() => { setSelectedId(null); refresh(); }} />;
+  }
+
+  return (
+    <div style={{ maxWidth: 700, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h1 style={{ fontFamily: serif, fontSize: 30, color: colors.navy, margin: 0 }}>Mes mariages</h1>
+        <button onClick={onLogout} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Se déconnecter</button>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <Button onClick={createWedding} disabled={creating}>{creating ? "Création…" : "+ Nouveau mariage"}</Button>
+      </div>
+      <ErrorText>{error}</ErrorText>
+
+      {loading ? (
+        <p style={{ fontFamily: bodyFont, color: colors.text }}>Chargement…</p>
+      ) : weddings.length === 0 ? (
+        <p style={{ fontFamily: bodyFont, color: colors.muted, fontStyle: "italic" }}>Aucun mariage pour le moment — créez-en un pour commencer.</p>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14 }}>
+          {weddings.map((w) => (
+            <div
+              key={w.id}
+              onClick={() => setSelectedId(w.id)}
+              style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 18, cursor: "pointer", position: "relative" }}
+            >
+              <p style={{ fontFamily: serif, fontSize: 20, color: colors.navy, margin: 0 }}>{w.couple_names || "Mariage sans nom"}</p>
+              <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, marginTop: 6 }}>{w.wedding_date || "Date non renseignée"}</p>
+              <button
+                onClick={(e) => deleteWedding(w.id, e)}
+                style={{ position: "absolute", top: 10, right: 10, background: "none", border: "none", color: colors.danger, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}
+              >
+                Supprimer
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const params = new URLSearchParams(window.location.search);
   const weddingId = params.get("w");
@@ -975,7 +1138,7 @@ function App() {
       ) : session === undefined ? (
         <p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.text }}>Chargement…</p>
       ) : session ? (
-        <AdminDashboard user={session.user} onLogout={() => sb.auth.signOut()} />
+        <OrganizerHome user={session.user} onLogout={() => sb.auth.signOut()} />
       ) : (
         <AuthView onLoggedIn={() => {}} />
       )}
