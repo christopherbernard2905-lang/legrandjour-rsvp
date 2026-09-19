@@ -245,8 +245,11 @@ function GuestView({ weddingId }) {
       ? Array(openCount).fill(wedding.single_menu || "Menu unique")
       : Array.from({ length: openCount }, (_, i) => openMeals[i] || mealOptions[0]);
     try {
-      const { data: existingInvite } = await sb.from("invites").select("*").eq("wedding_id", weddingId).ilike("name", openName.trim()).maybeSingle();
-      let invite = existingInvite;
+      const { data: allInvites } = await sb.from("invites").select("*").eq("wedding_id", weddingId);
+      const candidates = (allInvites || []).filter((inv) => fuzzyNameMatch(openName, inv.name));
+      // En cas de plusieurs correspondances proches, on garde la plus ressemblante
+      candidates.sort((a, b) => levenshtein(normalizeText(openName), normalizeText(a.name)) - levenshtein(normalizeText(openName), normalizeText(b.name)));
+      let invite = candidates[0] || null;
       if (invite) {
         await sb.from("invites").update({ allotted: openCount }).eq("id", invite.id);
       } else {
