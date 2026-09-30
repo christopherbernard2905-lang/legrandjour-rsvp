@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Le Grand Jour — RSVP</title>
+<title>Jour J — RSVP événements</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -11,9 +11,47 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
-  html, body { margin: 0; padding: 0; background: #F3ECE0; }
+  html, body {
+    margin: 0; padding: 0;
+    background: radial-gradient(ellipse at top, #F8F2E7 0%, #F3ECE0 55%, #EDE3D2 100%);
+    background-attachment: fixed;
+  }
   * { box-sizing: border-box; }
   #root { min-height: 100vh; }
+  body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+  ::selection { background: #B08D57; color: #FFFDF9; }
+
+  input:focus, select:focus, textarea:focus {
+    border-color: #B08D57 !important;
+    box-shadow: 0 0 0 3px rgba(176, 141, 87, 0.15);
+  }
+
+  .btn-primary { transition: transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease; }
+  .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(31, 42, 68, 0.25); }
+  .btn-primary:active:not(:disabled) { transform: translateY(0); }
+
+  .btn-ghost { transition: background 150ms ease, border-color 150ms ease; }
+  .btn-ghost:hover:not(:disabled) { background: rgba(176, 141, 87, 0.08) !important; border-color: #B08D57 !important; }
+
+  .btn-danger { transition: background 150ms ease; }
+  .btn-danger:hover:not(:disabled) { background: rgba(154, 59, 59, 0.06) !important; }
+
+  .card-hover { transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease; }
+  .card-hover:hover { transform: translateY(-3px); box-shadow: 0 10px 26px rgba(31, 42, 68, 0.10); border-color: #B08D57 !important; }
+
+  .fade-in { animation: fadeInUp 480ms ease both; }
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .clickable-name { transition: background 150ms ease, border-color 150ms ease, padding-left 150ms ease; }
+  .clickable-name:hover { background: #FBF3E4 !important; border-color: #B08D57 !important; padding-left: 16px !important; }
+
+  @media (max-width: 640px) {
+    .frame-padding { padding: 28px 20px !important; }
+  }
 </style>
 </head>
 <body>
@@ -34,6 +72,14 @@ const DEFAULT_MEAL_OPTIONS = [
 ];
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
+
+// Réessaie une fois après un court délai en cas d'échec (glitch réseau transitoire)
+async function withRetry(fn) {
+  const first = await fn();
+  if (!first.error) return first;
+  await new Promise((r) => setTimeout(r, 800));
+  return await fn();
+}
 
 function normalizeText(s) {
   return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
@@ -150,7 +196,7 @@ function Divider() {
 }
 function Frame({ children }) {
   return (
-    <div style={{ width: "100%", maxWidth: 440, margin: "0 auto", background: colors.card, border: `1px solid ${colors.gold}`, boxShadow: `0 0 0 5px ${colors.card}, 0 0 0 6px ${colors.border}`, padding: "40px 32px" }}>
+    <div className="fade-in frame-padding" style={{ width: "100%", maxWidth: 440, margin: "0 auto", background: colors.card, border: `1px solid ${colors.gold}`, boxShadow: `0 0 0 5px ${colors.card}, 0 0 0 6px ${colors.border}, 0 20px 45px rgba(31, 42, 68, 0.12)`, padding: "44px 36px" }}>
       {children}
     </div>
   );
@@ -163,15 +209,16 @@ function Field({ label, children }) {
     </label>
   );
 }
-const inputStyle = { width: "100%", fontFamily: bodyFont, fontSize: 16, padding: "10px 12px", background: "#FAF6F0", border: `1px solid ${colors.borderStrong}`, color: colors.navy, outline: "none", boxSizing: "border-box" };
+const inputStyle = { width: "100%", fontFamily: bodyFont, fontSize: 16, padding: "10px 12px", background: "#FAF6F0", border: `1px solid ${colors.borderStrong}`, borderRadius: 2, color: colors.navy, outline: "none", boxSizing: "border-box", transition: "border-color 150ms ease, box-shadow 150ms ease" };
 function TextInput(props) { return <input {...props} style={{ ...inputStyle, ...(props.style || {}) }} />; }
 function Select(props) { return <select {...props} style={{ ...inputStyle, ...(props.style || {}) }}>{props.children}</select>; }
 function Button({ children, onClick, variant = "primary", small, disabled, type = "button" }) {
-  const base = { fontFamily: bodyFont, fontSize: small ? 13 : 16, letterSpacing: "0.02em", padding: small ? "6px 14px" : "11px 26px", cursor: disabled ? "default" : "pointer", border: `1px solid ${colors.navy}`, transition: "all 150ms ease", opacity: disabled ? 0.5 : 1, whiteSpace: "nowrap" };
+  const base = { fontFamily: bodyFont, fontSize: small ? 13 : 16, letterSpacing: "0.02em", padding: small ? "6px 14px" : "11px 26px", cursor: disabled ? "default" : "pointer", border: `1px solid ${colors.navy}`, borderRadius: 2, opacity: disabled ? 0.5 : 1, whiteSpace: "nowrap" };
+  const variantClass = variant === "primary" ? "btn-primary" : variant === "ghost" ? "btn-ghost" : "btn-danger";
   const styles = variant === "primary" ? { ...base, background: colors.navy, color: "#FAF6F0" }
     : variant === "ghost" ? { ...base, background: "transparent", color: colors.navy, border: `1px solid ${colors.borderStrong}` }
     : { ...base, background: "transparent", color: colors.danger, border: `1px solid ${colors.danger}` };
-  return <button type={type} onClick={onClick} disabled={disabled} style={styles}>{children}</button>;
+  return <button type={type} onClick={onClick} disabled={disabled} className={variantClass} style={styles}>{children}</button>;
 }
 function ErrorText({ children }) {
   if (!children) return null;
@@ -179,9 +226,9 @@ function ErrorText({ children }) {
 }
 function MetricCard({ label, value, accent }) {
   return (
-    <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: "14px 18px", flex: "1 1 130px", textAlign: "center" }}>
-      <p style={{ fontFamily: serif, fontSize: 26, color: accent ? colors.gold : colors.navy, margin: 0, lineHeight: 1 }}>{value}</p>
-      <p style={{ fontFamily: bodyFont, fontSize: 12, color: colors.muted, marginTop: 6 }}>{label}</p>
+    <div className="card-hover" style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "16px 18px", flex: "1 1 130px", textAlign: "center", boxShadow: "0 2px 8px rgba(31,42,68,0.04)" }}>
+      <p style={{ fontFamily: serif, fontSize: 28, color: accent ? colors.gold : colors.navy, margin: 0, lineHeight: 1 }}>{value}</p>
+      <p style={{ fontFamily: bodyFont, fontSize: 12, color: colors.muted, marginTop: 6, letterSpacing: "0.03em" }}>{label}</p>
     </div>
   );
 }
@@ -203,6 +250,8 @@ function GuestView({ weddingId }) {
   const [childrenCount, setChildrenCount] = useState(0);
   const [activityNotes, setActivityNotes] = useState("");
   const [showPractical, setShowPractical] = useState(false);
+  const [assignedTable, setAssignedTable] = useState(null);
+  const [assignedSeats, setAssignedSeats] = useState([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
 
@@ -214,7 +263,7 @@ function GuestView({ weddingId }) {
   }, [weddingId]);
 
   if (loadingWedding) return <Frame><p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.text }}>Chargement…</p></Frame>;
-  if (!wedding) return <Frame><p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.danger }}>Ce lien de mariage est introuvable.</p></Frame>;
+  if (!wedding) return <Frame><p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.danger }}>Ce lien d'événement est introuvable.</p></Frame>;
 
   const isSingleMenu = wedding.meal_mode === "single";
   const mealOptions = wedding.meal_options && wedding.meal_options.length > 0 ? wedding.meal_options : DEFAULT_MEAL_OPTIONS;
@@ -241,7 +290,9 @@ function GuestView({ weddingId }) {
   const choose = async (invite) => {
     setSelected(invite); setLoading(true);
     const { data } = await sb.from("rsvps").select("*").eq("invite_id", invite.id).maybeSingle();
+    let hasExisting = false;
     if (data) {
+      hasExisting = true;
       setExistingRsvp(data);
       setAttending(data.attending);
       setCount(data.guest_count || 1);
@@ -257,7 +308,17 @@ function GuestView({ weddingId }) {
       setMemberNames("");
       setAllergies(""); setChildrenCount(0); setActivityNotes("");
     }
-    setSaved(false); setLoading(false);
+    if (invite.table_id) {
+      const { data: tableData } = await sb.from("seating_tables").select("*").eq("id", invite.table_id).maybeSingle();
+      setAssignedTable(tableData || null);
+      const seats = tableData && tableData.seat_assignments ? tableData.seat_assignments[invite.id] || [] : [];
+      setAssignedSeats(seats);
+    } else {
+      setAssignedTable(null);
+      setAssignedSeats([]);
+    }
+    setSaved(hasExisting && data.attending !== null);
+    setLoading(false);
   };
 
   const updateCount = (n) => {
@@ -282,9 +343,9 @@ function GuestView({ weddingId }) {
       children_count: attending ? Number(childrenCount) || 0 : 0, activity_notes: attending ? activityNotes.trim() : "",
       submitted_at: new Date().toISOString(),
     };
-    const { error } = await sb.from("rsvps").upsert(payload, { onConflict: "invite_id" });
+    const { error } = await withRetry(() => sb.from("rsvps").upsert(payload, { onConflict: "invite_id" }));
     if (error) {
-      setError("La confirmation n'a pas pu être enregistrée (" + error.message + ").");
+      setError("Un problème de connexion empêche l'enregistrement pour le moment. Vérifiez votre connexion internet et réessayez dans quelques instants.");
     } else {
       if (wedding.open_mode && attending) {
         await sb.from("invites").update({ allotted: count }).eq("id", selected.id);
@@ -299,7 +360,7 @@ function GuestView({ weddingId }) {
     <Frame>
       {wedding.announced && wedding.couple_names && (
         <div style={{ textAlign: "center", marginBottom: 8 }}>
-          <p style={{ fontFamily: bodyFont, fontSize: 13, letterSpacing: "0.08em", color: colors.gold }}>Ils se marient</p>
+          <p style={{ fontFamily: bodyFont, fontSize: 13, letterSpacing: "0.08em", color: colors.gold }}>Vous êtes invité(e)</p>
           <h2 style={{ fontFamily: serif, fontStyle: "italic", fontSize: 30, color: colors.navy, lineHeight: 1.2 }}>{wedding.couple_names}</h2>
           {wedding.wedding_date && <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text }}>{wedding.wedding_date}</p>}
           {wedding.message && <p style={{ fontFamily: bodyFont, fontSize: 14, fontStyle: "italic", color: colors.text, marginTop: 8 }}>{wedding.message}</p>}
@@ -329,7 +390,7 @@ function GuestView({ weddingId }) {
 
       {!selected && deadlinePassed && (
         <p style={{ fontFamily: bodyFont, color: colors.danger, fontSize: 15, textAlign: "center" }}>
-          La date limite de réponse est dépassée. Merci de contacter directement les mariés.
+          La date limite de réponse est dépassée. Merci de contacter directement les organisateurs.
         </p>
       )}
 
@@ -343,7 +404,7 @@ function GuestView({ weddingId }) {
           {matches && matches.length === 0 && (
             <div style={{ textAlign: "center", marginTop: 24 }}>
               <p style={{ fontFamily: bodyFont, color: colors.danger, fontSize: 15 }}>
-                Aucune invitation ne correspond à ce nom{wedding.open_mode ? "." : " — vérifiez l'orthographe ou contactez les mariés."}
+                Aucune invitation ne correspond à ce nom{wedding.open_mode ? "." : " — vérifiez l'orthographe ou contactez les organisateurs."}
               </p>
               {wedding.open_mode && (
                 <Button onClick={registerNew} disabled={loading}>{loading ? "…" : `Créer une nouvelle invitation pour "${query.trim()}"`}</Button>
@@ -354,7 +415,7 @@ function GuestView({ weddingId }) {
             <div style={{ marginTop: 24 }}>
               <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, marginBottom: 8 }}>Sélectionnez votre nom :</p>
               {matches.map((m) => (
-                <button key={m.id} onClick={() => choose(m)} style={{ ...inputStyle, display: "block", width: "100%", textAlign: "left", marginBottom: 8, cursor: "pointer", background: colors.card }}>{m.name}</button>
+                <button key={m.id} className="clickable-name" onClick={() => choose(m)} style={{ ...inputStyle, display: "block", width: "100%", textAlign: "left", marginBottom: 8, cursor: "pointer", background: colors.card }}>{m.name}</button>
               ))}
               {wedding.open_mode && (
                 <button onClick={registerNew} disabled={loading} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", marginTop: 8 }}>
@@ -434,7 +495,14 @@ function GuestView({ weddingId }) {
           {attending && (
             <React.Fragment>
               <Divider />
-              <p style={{ fontFamily: bodyFont, fontSize: 16, color: colors.navy }}>{selected.table_id ? "Votre table vous sera confirmée sur place" : "Votre table vous sera communiquée prochainement"}</p>
+              {assignedTable ? (
+                <p style={{ fontFamily: bodyFont, fontSize: 16, color: colors.navy }}>
+                  {assignedTable.name}
+                  {assignedSeats.length > 0 && ` — chaise${assignedSeats.length > 1 ? "s" : ""} ${assignedSeats.join(", ")}`}
+                </p>
+              ) : (
+                <p style={{ fontFamily: bodyFont, fontSize: 16, color: colors.navy }}>Votre table vous sera communiquée prochainement</p>
+              )}
               <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text }}>{count} personne{count > 1 ? "s" : ""} attendue{count > 1 ? "s" : ""}</p>
               {memberNames && <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, fontStyle: "italic" }}>{memberNames}</p>}
               <ul style={{ listStyle: "none", padding: 0, marginTop: 12 }}>
@@ -626,12 +694,60 @@ function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
     return party.size > 1 ? `${party.name} (${seatIndexWithinParty + 1}/${party.size})` : party.name;
   };
 
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [autoAssignMsg, setAutoAssignMsg] = useState("");
+
+  const autoAssignAlphabetical = async () => {
+    setAutoAssigning(true); setAutoAssignMsg("");
+    const sortedUnassigned = [...unassigned].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    const tablesState = tables.map((t) => ({ ...t, seat_assignments: { ...(t.seat_assignments || {}) } }));
+    const changedTableIds = new Set();
+    let placedCount = 0;
+    let skippedCount = 0;
+
+    for (const party of sortedUnassigned) {
+      let placed = false;
+      for (const t of tablesState) {
+        const occupied = Object.values(t.seat_assignments).flat();
+        const remaining = t.capacity - occupied.length;
+        if (remaining >= party.size) {
+          const occSet = new Set(occupied);
+          const freeSeats = [];
+          for (let n = 1; n <= t.capacity && freeSeats.length < party.size; n++) {
+            if (!occSet.has(n)) freeSeats.push(n);
+          }
+          t.seat_assignments[party.id] = freeSeats;
+          changedTableIds.add(t.id);
+          await sb.from("invites").update({ table_id: t.id }).eq("id", party.id);
+          placedCount++;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) skippedCount++;
+    }
+
+    for (const tid of changedTableIds) {
+      const t = tablesState.find((x) => x.id === tid);
+      await sb.from("seating_tables").update({ seat_assignments: t.seat_assignments }).eq("id", tid);
+    }
+
+    setAutoAssignMsg(
+      placedCount === 0
+        ? "Aucun foyer n'a pu être placé (tables pleines ou trop petites)."
+        : `${placedCount} foyer(s) placé(s) automatiquement.` + (skippedCount > 0 ? ` ${skippedCount} n'ont pas trouvé de table assez grande.` : "")
+    );
+    setAutoAssigning(false);
+    refreshInvites();
+    refresh();
+  };
+
   const totalGuests = parties.reduce((s, p) => s + p.size, 0);
   const seatedGuests = parties.filter((p) => p.tableId).reduce((s, p) => s + p.size, 0);
   const totalCapacity = tables.reduce((s, t) => s + t.capacity, 0);
 
   return (
-    <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+    <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
       <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 4 }}>Plan de table</p>
       <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 16 }}>Les foyers confirmés apparaissent automatiquement. Sélectionnez-en un puis cliquez sur une table.</p>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
@@ -639,6 +755,14 @@ function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
         <MetricCard label="Placés" value={seatedGuests} accent />
         <MetricCard label="Capacité totale" value={totalCapacity} />
       </div>
+      {tables.length > 0 && unassigned.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <Button variant="ghost" small onClick={autoAssignAlphabetical} disabled={autoAssigning}>
+            {autoAssigning ? "Placement en cours…" : "Placement automatique (ordre alphabétique)"}
+          </Button>
+          {autoAssignMsg && <p style={{ fontFamily: bodyFont, fontSize: 12, color: colors.text, marginTop: 6 }}>{autoAssignMsg}</p>}
+        </div>
+      )}
       <div style={{ background: "#FAF6F0", border: `1px solid ${colors.border}`, padding: 14, marginBottom: 16 }}>
         <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.navy, marginBottom: 8 }}>À placer</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 28 }}>
@@ -657,7 +781,7 @@ function SeatingPlan({ weddingId, invites, rsvps, refreshInvites }) {
           const used = seated.reduce((s, p) => s + p.size, 0);
           const full = used >= t.capacity;
           return (
-            <div key={t.id} onClick={() => selectedPartyId && !full && assignSelected(t.id)} style={{ background: colors.card, border: `1px solid ${errorTableId === t.id ? colors.danger : full ? colors.gold : colors.border}`, padding: 14, cursor: selectedPartyId && !full ? "pointer" : "default", position: "relative" }}>
+            <div key={t.id} onClick={() => selectedPartyId && !full && assignSelected(t.id)} style={{ background: colors.card, border: `1px solid ${errorTableId === t.id ? colors.danger : full ? colors.gold : colors.border}`, borderRadius: 3, padding: 14, cursor: selectedPartyId && !full ? "pointer" : "default", position: "relative", boxShadow: "0 2px 8px rgba(31,42,68,0.04)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                 <span style={{ fontFamily: serif, fontSize: 17, color: colors.navy }}>{t.name}</span>
                 <span style={{ fontFamily: bodyFont, fontSize: 12, color: full ? colors.gold : colors.muted }}>{used}/{t.capacity}</span>
@@ -861,6 +985,44 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
 
   const confirmedCount = invites.reduce((s, inv) => { const r = rsvps[inv.id]; return s + (r && r.attending ? r.guest_count : 0); }, 0);
 
+  const exportCsv = () => {
+    const escape = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+    const rows = [
+      ["Foyer", "Nombre attribué", "Statut", "Nombre confirmé", "Table", "Noms des personnes", "Repas", "Allergies", "Enfants", "Activité enfants"],
+    ];
+    invites.forEach((inv) => {
+      const r = rsvps[inv.id];
+      const tableName = inv.table_id ? "Assignée" : "";
+      rows.push([
+        inv.name,
+        inv.allotted,
+        r ? (r.attending ? "Présent" : "Absent") : "En attente",
+        r && r.attending ? r.guest_count : "",
+        tableName,
+        r ? r.member_names || "" : "",
+        r ? (r.meals || []).join(" / ") : "",
+        r ? r.allergies || "" : "",
+        r ? r.children_count || 0 : "",
+        r ? r.activity_notes || "" : "",
+      ]);
+    });
+    const csvContent = rows.map((row) => row.map(escape).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `invites-${(wedding.couple_names || "evenement").replace(/[^a-z0-9]+/gi, "-")}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const presentAlphabetical = invites
+    .filter((inv) => rsvps[inv.id] && rsvps[inv.id].attending)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
   const mealSummary = (() => {
     const counts = {};
     invites.forEach((inv) => {
@@ -897,7 +1059,7 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
     <div style={{ maxWidth: 760, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div>
-          <button onClick={onBack} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", marginBottom: 4, display: "block" }}>← Retour à mes mariages</button>
+          <button onClick={onBack} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.gold, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", marginBottom: 4, display: "block" }}>← Retour à mes événements</button>
           <h1 style={{ fontFamily: serif, fontSize: 28, color: colors.navy, margin: 0 }}>Tableau des invités</h1>
         </div>
         <button onClick={onLogout} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Se déconnecter</button>
@@ -909,10 +1071,10 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
       </div>
 
       {isOwner && (
-        <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+        <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
           <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 4 }}>Collaborateurs</p>
           <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 12 }}>
-            Donnez accès à ce mariage à une autre personne (les mariés, par exemple) — elle devra créer un compte avec cet email pour s'y connecter.
+            Donnez accès à cet événement à une autre personne (les organisateurs, par exemple) — elle devra créer un compte avec cet email pour s'y connecter.
           </p>
           {collaborators.map((c) => (
             <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${colors.border}` }}>
@@ -928,10 +1090,10 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
         </div>
       )}
 
-      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
-        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Annonce du mariage &amp; lieu de réception</p>
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Détails de l'événement &amp; lieu</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-          <div style={{ flex: "1 1 220px" }}><Field label="Noms des mariés"><TextInput value={wedding.couple_names || ""} onChange={(e) => updateWeddingField("couple_names", e.target.value)} /></Field></div>
+          <div style={{ flex: "1 1 220px" }}><Field label="Titre de l'événement"><TextInput value={wedding.couple_names || ""} onChange={(e) => updateWeddingField("couple_names", e.target.value)} placeholder="Ex. Camille & Antoine, Anniversaire de Julie, Soirée Capgemini" /></Field></div>
           <div style={{ flex: "1 1 160px" }}><Field label="Date (texte affiché)"><TextInput value={wedding.wedding_date || ""} onChange={(e) => updateWeddingField("wedding_date", e.target.value)} placeholder="Samedi 12 juin 2027" /></Field></div>
           <div style={{ flex: "1 1 160px" }}><Field label="Date réelle (pour le compte à rebours)"><TextInput type="date" value={wedding.wedding_date_iso || ""} onChange={(e) => updateWeddingField("wedding_date_iso", e.target.value)} /></Field></div>
           <div style={{ flex: "1 1 220px" }}><Field label="Nom de la salle"><TextInput value={wedding.venue_name || ""} onChange={(e) => updateWeddingField("venue_name", e.target.value)} /></Field></div>
@@ -947,7 +1109,7 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
         <ErrorText>{error}</ErrorText>
       </div>
 
-      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
         <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 8 }}>Mode de réponse</p>
         <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 16 }}>
           Pour un grand nombre d'invités, laissez chacun s'inscrire lui-même plutôt que de préparer la liste à l'avance.
@@ -961,20 +1123,20 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
         </div>
       </div>
 
-      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
         <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 8 }}>Infos pratiques</p>
         <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.text, marginBottom: 16 }}>
           Affichées à l'invité juste après sa confirmation de présence.
         </p>
         <Field label="Parking à proximité"><TextInput value={wedding.parking_info || ""} onChange={(e) => updateWeddingField("parking_info", e.target.value)} placeholder="Ex. Parking gratuit sur place, 200 places" /></Field>
         <Field label="Transport"><TextInput value={wedding.transport_info || ""} onChange={(e) => updateWeddingField("transport_info", e.target.value)} placeholder="Ex. Navette au départ de la gare à 17h" /></Field>
-        <Field label="Hôtels à proximité"><TextInput value={wedding.hotel_info || ""} onChange={(e) => updateWeddingField("hotel_info", e.target.value)} placeholder="Ex. Hôtel du Parc, à 5 min — code partenaire MARIAGE10" /></Field>
+        <Field label="Hôtels à proximité"><TextInput value={wedding.hotel_info || ""} onChange={(e) => updateWeddingField("hotel_info", e.target.value)} placeholder="Ex. Hôtel du Parc, à 5 min — code partenaire EVENT10" /></Field>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
           <Button onClick={saveWedding} disabled={savingInfo}>{savingInfo ? "Enregistrement…" : "Enregistrer"}</Button>
         </div>
       </div>
 
-      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
         <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Configuration des repas</p>
         <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
           <Button variant={wedding.meal_mode !== "single" ? "primary" : "ghost"} onClick={() => updateWeddingField("meal_mode", "choice")}>Plusieurs plats au choix</Button>
@@ -998,7 +1160,7 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
         </div>
       </div>
 
-      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 20, marginBottom: 24 }}>
+      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
         <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>Ajouter une invitation</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
           <div style={{ flex: "1 1 180px" }}><Field label="Nom du foyer"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field></div>
@@ -1026,9 +1188,32 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
         )}
       </div>
 
-      <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>
-        {confirmedCount} convive(s) confirmé(s) sur {invites.reduce((s, i) => s + i.allotted, 0)} places allouées
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, margin: 0 }}>
+          {confirmedCount} convive(s) confirmé(s) sur {invites.reduce((s, i) => s + i.allotted, 0)} places allouées
+        </p>
+        {invites.length > 0 && (
+          <Button variant="ghost" small onClick={exportCsv}>Exporter en CSV</Button>
+        )}
+      </div>
+
+      {presentAlphabetical.length > 0 && (
+        <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, boxShadow: "0 2px 10px rgba(31,42,68,0.05)", padding: 22, marginBottom: 24 }}>
+          <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.navy, marginBottom: 12 }}>
+            Invités présents (ordre alphabétique)
+          </p>
+          <div style={{ columns: "2 220px", columnGap: 24 }}>
+            {presentAlphabetical.map((inv) => {
+              const r = rsvps[inv.id];
+              return (
+                <p key={inv.id} style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, margin: "0 0 6px 0", breakInside: "avoid" }}>
+                  {inv.name} <span style={{ color: colors.muted }}>({r.guest_count})</span>
+                </p>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {mealSummary.length > 0 && (
         <div style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: "16px 20px", marginBottom: 24 }}>
@@ -1121,14 +1306,14 @@ function OrganizerHome({ user, onLogout }) {
   const createWedding = async () => {
     setCreating(true); setError("");
     const { data, error } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
-    if (error) { setError("Impossible de créer un nouveau mariage (" + error.message + ")."); setCreating(false); return; }
+    if (error) { setError("Impossible de créer un nouvel événement (" + error.message + ")."); setCreating(false); return; }
     setCreating(false);
     setSelectedId(data.id);
   };
 
   const deleteWedding = async (id, e) => {
     e.stopPropagation();
-    if (!window.confirm("Supprimer définitivement ce mariage et toutes ses données (invités, réponses, tables) ?")) return;
+    if (!window.confirm("Supprimer définitivement cet événement et toutes ses données (invités, réponses, tables) ? Cette action est IRRÉVERSIBLE — pensez à exporter en CSV depuis le tableau de bord avant si besoin.")) return;
     await sb.from("weddings").delete().eq("id", id);
     refresh();
   };
@@ -1140,28 +1325,29 @@ function OrganizerHome({ user, onLogout }) {
   return (
     <div style={{ maxWidth: 700, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h1 style={{ fontFamily: serif, fontSize: 30, color: colors.navy, margin: 0 }}>Mes mariages</h1>
+        <h1 style={{ fontFamily: serif, fontSize: 30, color: colors.navy, margin: 0 }}>Mes événements</h1>
         <button onClick={onLogout} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Se déconnecter</button>
       </div>
 
       <div style={{ marginBottom: 20 }}>
-        <Button onClick={createWedding} disabled={creating}>{creating ? "Création…" : "+ Nouveau mariage"}</Button>
+        <Button onClick={createWedding} disabled={creating}>{creating ? "Création…" : "+ Nouvel événement"}</Button>
       </div>
       <ErrorText>{error}</ErrorText>
 
       {loading ? (
         <p style={{ fontFamily: bodyFont, color: colors.text }}>Chargement…</p>
       ) : weddings.length === 0 ? (
-        <p style={{ fontFamily: bodyFont, color: colors.muted, fontStyle: "italic" }}>Aucun mariage pour le moment — créez-en un pour commencer.</p>
+        <p style={{ fontFamily: bodyFont, color: colors.muted, fontStyle: "italic" }}>Aucun événement pour le moment — créez-en un pour commencer.</p>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14 }}>
           {weddings.map((w) => (
             <div
               key={w.id}
+              className="card-hover fade-in"
               onClick={() => setSelectedId(w.id)}
-              style={{ background: colors.card, border: `1px solid ${colors.border}`, padding: 18, cursor: "pointer", position: "relative" }}
+              style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 3, padding: 20, cursor: "pointer", position: "relative", boxShadow: "0 2px 10px rgba(31,42,68,0.05)" }}
             >
-              <p style={{ fontFamily: serif, fontSize: 20, color: colors.navy, margin: 0 }}>{w.couple_names || "Mariage sans nom"}</p>
+              <p style={{ fontFamily: serif, fontSize: 22, color: colors.navy, margin: 0 }}>{w.couple_names || "Événement sans nom"}</p>
               <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, marginTop: 6 }}>{w.wedding_date || "Date non renseignée"}</p>
               <button
                 onClick={(e) => deleteWedding(w.id, e)}
