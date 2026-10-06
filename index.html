@@ -69,9 +69,11 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
    1) Dans le dashboard Stripe : Produits > créer "Pass Événement" (paiement unique) et "Abonnement
       Organisateur" (récurrent mensuel) > pour chacun, bouton "Créer un lien de paiement".
    2) Colle les deux URL ci-dessous.
-   3) Après un paiement, passe manuellement la ligne correspondante dans la table Supabase
-      "organizer_plans" (colonne plan) sur "event_pass" ou "subscription" — en attendant un webhook
-      automatique plus tard. */
+   3) Après un paiement, dans la table Supabase "organizer_plans", ligne du client :
+      - Pass Événement  : events_allowed + 1 (ex. 1 -> 2)
+      - Abonnement      : plan = "subscription" (événements illimités)
+      — en attendant un webhook automatique plus tard.
+   La limite est appliquée par un déclencheur côté base de données (voir SQL fourni), pas seulement ici. */
 const STRIPE_EVENT_PASS_LINK = "https://buy.stripe.com/aFa9AVb7R6HwaGU2Z10gw00";
 const STRIPE_SUBSCRIPTION_LINK = "https://buy.stripe.com/7sY14pgsbaXM6qE5790gw01";
 const FREE_PLAN_EVENT_LIMIT = 1;
@@ -1304,12 +1306,12 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
 
 /* ============================== ROOT ============================== */
 /* ============================== ORGANIZER HOME (liste des mariages) ============================== */
-function UpgradeNotice({ plan, ownedCount }) {
+function UpgradeNotice({ quota }) {
   return (
     <div style={{ background: colors.card, border: `1px solid ${colors.gold}`, borderRadius: 3, padding: 22, marginBottom: 20, boxShadow: "0 2px 10px rgba(31,42,68,0.05)" }}>
       <p style={{ fontFamily: serif, fontSize: 20, color: colors.navy, marginBottom: 6 }}>Passez à l'offre payante pour créer un nouvel événement</p>
       <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, marginBottom: 16 }}>
-        L'offre gratuite est limitée à {FREE_PLAN_EVENT_LIMIT} événement actif (vous en avez déjà {ownedCount}). Choisissez la formule adaptée :
+        Vous avez utilisé les {quota.allowed} événement{quota.allowed > 1 ? "s" : ""} inclus dans votre offre (un événement supprimé reste décompté). Choisissez la formule adaptée :
       </p>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         {STRIPE_EVENT_PASS_LINK ? (
@@ -1340,7 +1342,7 @@ function OrganizerHome({ user, onLogout }) {
   const [selectedId, setSelectedId] = useState(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
-  const [plan, setPlan] = useState("free");
+  const [quota, setQuota] = useState({ plan: "free", created: 0, allowed: FREE_PLAN_EVENT_LIMIT });
   const [showUpgrade, setShowUpgrade] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -1358,21 +1360,29 @@ function OrganizerHome({ user, onLogout }) {
     const merged = [...(owned || [])];
     collabWeddings.forEach((w) => { if (!merged.some((m) => m.id === w.id)) merged.push(w); });
     setWeddings(merged);
-    const { data: planRow } = await sb.from("organizer_plans").select("plan").eq("organizer_id", user.id).maybeSingle();
-    setPlan((planRow && planRow.plan) || "free");
+    const { data: planRow } = await sb.from("organizer_plans").select("plan, events_created, events_allowed").eq("organizer_id", user.id).maybeSingle();
+    setQuota({
+      plan: (planRow && planRow.plan) || "free",
+      created: (planRow && planRow.events_created) || 0,
+      allowed: (planRow && planRow.events_allowed) || FREE_PLAN_EVENT_LIMIT,
+    });
     setLoading(false);
   }, [user.id, user.email]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const ownedCount = weddings.filter((w) => w.organizer_id === user.id).length;
-  const atFreeLimit = plan === "free" && ownedCount >= FREE_PLAN_EVENT_LIMIT;
+  const atLimit = quota.plan !== "subscription" && quota.created >= quota.allowed;
 
   const createWedding = async () => {
-    if (atFreeLimit) { setShowUpgrade(true); return; }
+    if (atLimit) { setShowUpgrade(true); return; }
     setCreating(true); setError("");
     const { data, error } = await sb.from("weddings").insert({ organizer_id: user.id }).select().single();
-    if (error) { setError("Impossible de créer un nouvel événement (" + error.message + ")."); setCreating(false); return; }
+    if (error) {
+      if ((error.message || "").includes("event_limit_reached")) { setShowUpgrade(true); refresh(); }
+      else setError("Impossible de créer un nouvel événement (" + error.message + ").");
+      setCreating(false);
+      return;
+    }
     setCreating(false);
     setSelectedId(data.id);
   };
@@ -1395,10 +1405,10 @@ function OrganizerHome({ user, onLogout }) {
         <button onClick={onLogout} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>Se déconnecter</button>
       </div>
       <p style={{ fontFamily: bodyFont, fontSize: 12, letterSpacing: "0.05em", color: colors.gold, marginBottom: 20 }}>
-        {plan === "subscription" ? "Abonnement Organisateur" : plan === "event_pass" ? "Pass Événement" : "Offre gratuite"}
+        {quota.plan === "subscription" ? "Abonnement Organisateur" : quota.allowed > FREE_PLAN_EVENT_LIMIT ? "Pass Événement" : "Offre gratuite"}
       </p>
 
-      {(showUpgrade || atFreeLimit) && <UpgradeNotice plan={plan} ownedCount={ownedCount} />}
+      {(showUpgrade || atLimit) && <UpgradeNotice quota={quota} />}
 
       <div style={{ marginBottom: 20 }}>
         <Button onClick={createWedding} disabled={creating}>{creating ? "Création…" : "+ Nouvel événement"}</Button>
