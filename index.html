@@ -1306,32 +1306,111 @@ function AdminDashboard({ weddingId, currentUser, onLogout, onBack }) {
 
 /* ============================== ROOT ============================== */
 /* ============================== ORGANIZER HOME (liste des mariages) ============================== */
-function UpgradeNotice({ quota }) {
+// Ajoute l'email et l'identifiant du compte au lien Stripe : l'email est pré-rempli au paiement,
+// et l'identifiant (client_reference_id) apparaît dans Stripe pour savoir quel compte activer.
+function payLink(base, user) {
+  if (!base) return "";
+  const sep = base.includes("?") ? "&" : "?";
+  return base + sep + "prefilled_email=" + encodeURIComponent(user.email || "") + "&client_reference_id=" + encodeURIComponent(user.id);
+}
+
+function PlanCard({ highlight, name, price, priceNote, features, href, cta }) {
   return (
-    <div style={{ background: colors.card, border: `1px solid ${colors.gold}`, borderRadius: 3, padding: 22, marginBottom: 20, boxShadow: "0 2px 10px rgba(31,42,68,0.05)" }}>
-      <p style={{ fontFamily: serif, fontSize: 20, color: colors.navy, marginBottom: 6 }}>Passez à l'offre payante pour créer un nouvel événement</p>
-      <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, marginBottom: 16 }}>
-        Vous avez utilisé les {quota.allowed} événement{quota.allowed > 1 ? "s" : ""} inclus dans votre offre (un événement supprimé reste décompté). Choisissez la formule adaptée :
-      </p>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        {STRIPE_EVENT_PASS_LINK ? (
-          <a href={STRIPE_EVENT_PASS_LINK} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
-            <Button>Pass Événement (un seul événement)</Button>
-          </a>
-        ) : (
-          <span style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, fontStyle: "italic" }}>Lien Pass Événement à configurer</span>
-        )}
-        {STRIPE_SUBSCRIPTION_LINK ? (
-          <a href={STRIPE_SUBSCRIPTION_LINK} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
-            <Button variant="ghost">Abonnement Organisateur (événements illimités)</Button>
-          </a>
-        ) : (
-          <span style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, fontStyle: "italic" }}>Lien Abonnement à configurer</span>
-        )}
+    <div style={{ flex: "1 1 220px", display: "flex", flexDirection: "column", background: colors.card, border: `${highlight ? 2 : 1}px solid ${highlight ? colors.gold : colors.border}`, borderRadius: 3, padding: "22px 20px", position: "relative" }}>
+      {highlight && (
+        <span style={{ position: "absolute", top: -11, left: 20, background: colors.gold, color: "#FFFDF9", fontFamily: bodyFont, fontSize: 11, letterSpacing: "0.04em", padding: "2px 10px", borderRadius: 2 }}>
+          Pour les organisateurs réguliers
+        </span>
+      )}
+      <p style={{ fontFamily: serif, fontSize: 21, color: colors.navy, margin: "0 0 4px 0" }}>{name}</p>
+      <p style={{ fontFamily: serif, fontSize: 34, color: colors.navy, margin: 0, lineHeight: 1.1 }}>{price}</p>
+      <p style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, margin: "2px 0 14px 0" }}>{priceNote}</p>
+      <ul style={{ listStyle: "none", padding: 0, margin: "0 0 18px 0", flex: 1 }}>
+        {features.map((f) => (
+          <li key={f} style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, marginBottom: 6, paddingLeft: 18, position: "relative" }}>
+            <span style={{ position: "absolute", left: 0, color: colors.gold }}>✓</span>{f}
+          </li>
+        ))}
+      </ul>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={highlight ? "btn-primary" : "btn-ghost"}
+          style={{ display: "block", textAlign: "center", textDecoration: "none", fontFamily: bodyFont, fontSize: 16, padding: "11px 16px", borderRadius: 2, border: `1px solid ${highlight ? colors.navy : colors.borderStrong}`, background: highlight ? colors.navy : "transparent", color: highlight ? "#FAF6F0" : colors.navy }}
+        >
+          {cta}
+        </a>
+      ) : (
+        <span style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, fontStyle: "italic", textAlign: "center" }}>Paiement bientôt disponible</span>
+      )}
+    </div>
+  );
+}
+
+function UpgradeModal({ quota, user, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(31,42,68,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 1000 }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upgrade-title"
+        onClick={(e) => e.stopPropagation()}
+        className="fade-in"
+        style={{ width: "100%", maxWidth: 620, maxHeight: "92vh", overflowY: "auto", background: colors.bg, border: `1px solid ${colors.gold}`, boxShadow: "0 24px 60px rgba(31,42,68,0.35)", padding: "32px 28px 24px", position: "relative" }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Fermer"
+          style={{ position: "absolute", top: 10, right: 14, background: "none", border: "none", fontSize: 22, lineHeight: 1, color: colors.muted, cursor: "pointer" }}
+        >
+          ×
+        </button>
+        <h2 id="upgrade-title" style={{ fontFamily: serif, fontSize: 28, color: colors.navy, margin: "0 0 8px 0", textAlign: "center" }}>
+          Débloquez un nouvel événement
+        </h2>
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text, textAlign: "center", margin: "0 auto 24px", maxWidth: 460 }}>
+          Votre offre gratuite inclut {quota.allowed} événement{quota.allowed > 1 ? "s" : ""}, et {quota.allowed > 1 ? "ils sont tous utilisés" : "il est déjà utilisé"}
+          {" "}(un événement supprimé reste décompté). Choisissez une formule pour continuer.
+        </p>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8 }}>
+          <PlanCard
+            name="Pass Événement"
+            price="29 €"
+            priceNote="paiement unique"
+            features={["1 événement supplémentaire", "RSVP, plan de table et menus", "Export CSV de la liste"]}
+            href={payLink(STRIPE_EVENT_PASS_LINK, user)}
+            cta="Acheter le Pass"
+          />
+          <PlanCard
+            highlight
+            name="Abonnement Organisateur"
+            price="49 €"
+            priceNote="par mois, résiliable à tout moment"
+            features={["Événements illimités", "Mariages, anniversaires, fêtes, pro", "Tout ce qu'inclut le Pass, pour chaque événement"]}
+            href={payLink(STRIPE_SUBSCRIPTION_LINK, user)}
+            cta="S'abonner"
+          />
+        </div>
+        <p style={{ fontFamily: bodyFont, fontSize: 12, color: colors.muted, textAlign: "center", margin: "20px 0 4px" }}>
+          Paiement sécurisé par Stripe. Utilisez la même adresse e-mail que votre compte ({user.email}) : votre accès est activé après réception du paiement.
+        </p>
+        <div style={{ textAlign: "center", marginTop: 8 }}>
+          <button onClick={onClose} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>
+            Plus tard
+          </button>
+        </div>
       </div>
-      <p style={{ fontFamily: bodyFont, fontSize: 12, color: colors.muted, marginTop: 14 }}>
-        Après paiement, votre accès est activé sous peu de temps par nos équipes.
-      </p>
     </div>
   );
 }
@@ -1408,7 +1487,7 @@ function OrganizerHome({ user, onLogout }) {
         {quota.plan === "subscription" ? "Abonnement Organisateur" : quota.allowed > FREE_PLAN_EVENT_LIMIT ? "Pass Événement" : "Offre gratuite"}
       </p>
 
-      {(showUpgrade || atLimit) && <UpgradeNotice quota={quota} />}
+      {showUpgrade && <UpgradeModal quota={quota} user={user} onClose={() => setShowUpgrade(false)} />}
 
       <div style={{ marginBottom: 20 }}>
         <Button onClick={createWedding} disabled={creating}>{creating ? "Création…" : "+ Nouvel événement"}</Button>
