@@ -63,7 +63,12 @@ const { useState, useEffect, useCallback, useRef } = React;
 /* ---------------------------- Config Supabase ---------------------------- */
 const SUPABASE_URL = "https://vrbxuotdelgmxqojzoki.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyYnh1b3RkZWxnbXhxb2p6b2tpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3Mzg5ODksImV4cCI6MjEwNTMxNDk4OX0.XwkVJUZ0xVSyV9nLu5c6FSDciaj59DjHvPaYPs9WbfM";
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Lu avant l'initialisation de Supabase (qui nettoie l'adresse) : permet de reconnaître
+// l'arrivée depuis un e-mail "mot de passe oublié", valide ou expiré.
+const AUTH_HASH = window.location.hash || "";
+const RECOVERY_IN_URL = AUTH_HASH.includes("type=recovery");
+const LINK_EXPIRED_IN_URL = AUTH_HASH.includes("error_code=otp_expired") || AUTH_HASH.includes("error=access_denied");
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { flowType: "implicit" } });
 
 /* ---------------------------- Paiement (Stripe Payment Links, sans code) ----------------------------
    1) Dans le dashboard Stripe : Produits > créer "Pass Événement" (paiement unique) et "Abonnement
@@ -588,17 +593,20 @@ function authErrorFr(msg) {
   if (m.includes("already registered") || m.includes("already been registered")) return "Un compte existe déjà avec cet e-mail. Utilisez l'onglet « Connexion ».";
   if (m.includes("email not confirmed")) return "Votre e-mail n'est pas encore confirmé. Cliquez sur le lien reçu par e-mail.";
   if (m.includes("password should be at least")) return "Le mot de passe est trop court (8 caractères minimum).";
+  if (m.includes("different from the old password")) return "Le nouveau mot de passe doit être différent de l'ancien.";
+  if (m.includes("session missing") || m.includes("expired") || m.includes("invalid token")) return "Ce lien a expiré ou a déjà été utilisé. Demandez-en un nouveau.";
   if (m.includes("rate limit") || m.includes("too many")) return "Trop de tentatives. Patientez quelques minutes puis réessayez.";
   if (m.includes("invalid email") || m.includes("unable to validate email")) return "Cette adresse e-mail n'est pas valide.";
+  if (m.includes("error sending")) return "L'e-mail n'a pas pu être envoyé pour le moment. Réessayez dans quelques minutes.";
   return "Une erreur est survenue : " + msg;
 }
 
-function AuthView({ onLoggedIn }) {
-  const [mode, setMode] = useState("login"); // login | signup
+function AuthView({ initialMode = "login", initialError = "", onLoggedIn }) {
+  const [mode, setMode] = useState(initialMode); // login | signup | forgot
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initialError);
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -611,6 +619,18 @@ function AuthView({ onLoggedIn }) {
     if (e) e.preventDefault();
     setError(""); setInfo("");
     if (!email.trim()) { setError("Saisissez votre adresse e-mail."); return; }
+
+    if (mode === "forgot") {
+      setLoading(true);
+      const { error } = await sb.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin + window.location.pathname,
+      });
+      if (error) setError(authErrorFr(error.message));
+      else setInfo("Si un compte existe avec cette adresse, un e-mail contenant un lien de réinitialisation vient d'être envoyé. Pensez à vérifier vos courriers indésirables. Le lien est valable un temps limité.");
+      setLoading(false);
+      return;
+    }
+
     if (mode === "signup") {
       if (password.length < 8) { setError("Choisissez un mot de passe d'au moins 8 caractères."); return; }
       if (password !== confirm) { setError("Les deux mots de passe ne sont pas identiques."); return; }
@@ -632,6 +652,7 @@ function AuthView({ onLoggedIn }) {
   };
 
   const isSignup = mode === "signup";
+  const isForgot = mode === "forgot";
   const tab = (value, label) => {
     const active = mode === value;
     return (
@@ -646,27 +667,48 @@ function AuthView({ onLoggedIn }) {
       </button>
     );
   };
+  const linkStyle = { fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer", padding: 0 };
 
   return (
     <Frame>
       <h2 style={{ fontFamily: serif, fontSize: 28, color: colors.navy, textAlign: "center", margin: 0 }}>Espace organisateurs</h2>
-      <div role="tablist" style={{ display: "flex", margin: "20px 0 22px", borderBottom: `1px solid ${colors.border}` }}>
-        {tab("login", "Connexion")}
-        {tab("signup", "Créer un compte")}
-      </div>
-      <p style={{ fontFamily: serif, fontSize: 22, color: colors.navy, textAlign: "center", margin: "0 0 4px" }}>
-        {isSignup ? "Créez votre espace" : "Bon retour"}
-      </p>
-      <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, textAlign: "center", margin: "0 0 22px" }}>
-        {isSignup ? "Gratuit pour votre premier événement, sans carte bancaire." : "Connectez-vous pour retrouver vos événements."}
-      </p>
+
+      {isForgot ? (
+        <div style={{ marginTop: 22 }}>
+          <p style={{ fontFamily: serif, fontSize: 22, color: colors.navy, textAlign: "center", margin: "0 0 4px" }}>Mot de passe oublié</p>
+          <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, textAlign: "center", margin: "0 0 22px" }}>
+            Saisissez l'adresse e-mail de votre compte : nous vous enverrons un lien pour choisir un nouveau mot de passe.
+          </p>
+        </div>
+      ) : (
+        <React.Fragment>
+          <div role="tablist" style={{ display: "flex", margin: "20px 0 22px", borderBottom: `1px solid ${colors.border}` }}>
+            {tab("login", "Connexion")}
+            {tab("signup", "Créer un compte")}
+          </div>
+          <p style={{ fontFamily: serif, fontSize: 22, color: colors.navy, textAlign: "center", margin: "0 0 4px" }}>
+            {isSignup ? "Créez votre espace" : "Bon retour"}
+          </p>
+          <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, textAlign: "center", margin: "0 0 22px" }}>
+            {isSignup ? "Gratuit pour votre premier événement, sans carte bancaire." : "Connectez-vous pour retrouver vos événements."}
+          </p>
+        </React.Fragment>
+      )}
+
       <form onSubmit={submit} noValidate>
         <Field label="Adresse e-mail">
           <TextInput type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
-        <Field label={isSignup ? "Choisir un mot de passe (8 caractères minimum)" : "Mot de passe"}>
-          <TextInput type="password" autoComplete={isSignup ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} />
-        </Field>
+        {!isForgot && (
+          <Field label={isSignup ? "Choisir un mot de passe (8 caractères minimum)" : "Mot de passe"}>
+            <TextInput type="password" autoComplete={isSignup ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+        )}
+        {mode === "login" && (
+          <div style={{ textAlign: "right", marginTop: -8, marginBottom: 12 }}>
+            <button type="button" onClick={() => switchMode("forgot")} style={linkStyle}>Mot de passe oublié ?</button>
+          </div>
+        )}
         {isSignup && (
           <Field label="Confirmer le mot de passe">
             <TextInput type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
@@ -675,14 +717,93 @@ function AuthView({ onLoggedIn }) {
         {error && <ErrorText>{error}</ErrorText>}
         {info && <p style={{ fontFamily: bodyFont, color: colors.success, fontSize: 14, marginTop: 4 }}>{info}</p>}
         <div style={{ textAlign: "center", marginTop: 16 }}>
-          <Button type="submit" disabled={loading}>{loading ? "Un instant…" : isSignup ? "Créer mon compte" : "Se connecter"}</Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? "Un instant…" : isForgot ? "Envoyer le lien" : isSignup ? "Créer mon compte" : "Se connecter"}
+          </Button>
         </div>
       </form>
+
       <div style={{ textAlign: "center", marginTop: 18 }}>
-        <button type="button" onClick={() => switchMode(isSignup ? "login" : "signup")} style={{ fontFamily: bodyFont, fontSize: 13, color: colors.muted, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>
-          {isSignup ? "Vous avez déjà un compte ? Connectez-vous" : "Pas encore de compte ? Créez-en un"}
-        </button>
+        {isForgot ? (
+          <button type="button" onClick={() => switchMode("login")} style={linkStyle}>← Retour à la connexion</button>
+        ) : (
+          <button type="button" onClick={() => switchMode(isSignup ? "login" : "signup")} style={linkStyle}>
+            {isSignup ? "Vous avez déjà un compte ? Connectez-vous" : "Pas encore de compte ? Créez-en un"}
+          </button>
+        )}
       </div>
+    </Frame>
+  );
+}
+
+/* Écran affiché quand l'utilisateur clique sur le lien reçu par e-mail : choix du nouveau mot de passe */
+function ResetPasswordView({ session, onDone }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const finish = (next) => {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    onDone(next);
+  };
+
+  const submit = async (e) => {
+    e.preventDefault(); setError("");
+    if (password.length < 8) { setError("Choisissez un mot de passe d'au moins 8 caractères."); return; }
+    if (password !== confirm) { setError("Les deux mots de passe ne sont pas identiques."); return; }
+    setLoading(true);
+    const { error } = await sb.auth.updateUser({ password });
+    setLoading(false);
+    if (error) { setError(authErrorFr(error.message)); return; }
+    setDone(true);
+  };
+
+  if (!session) {
+    return (
+      <Frame>
+        <h2 style={{ fontFamily: serif, fontSize: 26, color: colors.navy, textAlign: "center", margin: 0 }}>Lien invalide ou expiré</h2>
+        <Divider />
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text, textAlign: "center", marginBottom: 20 }}>
+          Ce lien de réinitialisation n'est plus valable. Demandez-en un nouveau, il ne prend qu'une minute.
+        </p>
+        <div style={{ textAlign: "center" }}><Button onClick={() => finish("forgot")}>Demander un nouveau lien</Button></div>
+      </Frame>
+    );
+  }
+
+  if (done) {
+    return (
+      <Frame>
+        <h2 style={{ fontFamily: serif, fontSize: 26, color: colors.navy, textAlign: "center", margin: 0 }}>Mot de passe modifié</h2>
+        <Divider />
+        <p style={{ fontFamily: bodyFont, fontSize: 15, color: colors.text, textAlign: "center", marginBottom: 20 }}>
+          Votre nouveau mot de passe est enregistré. Vous êtes connecté(e).
+        </p>
+        <div style={{ textAlign: "center" }}><Button onClick={() => finish()}>Accéder à mes événements</Button></div>
+      </Frame>
+    );
+  }
+
+  return (
+    <Frame>
+      <h2 style={{ fontFamily: serif, fontSize: 26, color: colors.navy, textAlign: "center", margin: 0 }}>Nouveau mot de passe</h2>
+      <p style={{ fontFamily: bodyFont, fontSize: 14, color: colors.text, textAlign: "center", margin: "8px 0 22px" }}>
+        Choisissez un nouveau mot de passe pour {session.user && session.user.email ? session.user.email : "votre compte"}.
+      </p>
+      <form onSubmit={submit} noValidate>
+        <Field label="Nouveau mot de passe (8 caractères minimum)">
+          <TextInput type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        <Field label="Confirmer le mot de passe">
+          <TextInput type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        </Field>
+        {error && <ErrorText>{error}</ErrorText>}
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <Button type="submit" disabled={loading}>{loading ? "Un instant…" : "Enregistrer le mot de passe"}</Button>
+        </div>
+      </form>
     </Frame>
   );
 }
@@ -1586,11 +1707,21 @@ function App() {
   const params = new URLSearchParams(window.location.search);
   const weddingId = params.get("w");
   const [session, setSession] = useState(undefined);
+  const [recovery, setRecovery] = useState(RECOVERY_IN_URL);
+  const [authStart, setAuthStart] = useState(
+    LINK_EXPIRED_IN_URL
+      ? { mode: "forgot", error: "Ce lien a expiré ou a déjà été utilisé. Demandez-en un nouveau." }
+      : { mode: "login", error: "" }
+  );
 
   useEffect(() => {
     if (weddingId) return;
+    if (LINK_EXPIRED_IN_URL) window.history.replaceState(null, "", window.location.pathname + window.location.search);
     sb.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: listener } = sb.auth.onAuthStateChange((_event, sess) => setSession(sess));
+    const { data: listener } = sb.auth.onAuthStateChange((event, sess) => {
+      setSession(sess);
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+    });
     return () => listener.subscription.unsubscribe();
   }, [weddingId]);
 
@@ -1600,10 +1731,18 @@ function App() {
         <GuestView weddingId={weddingId} />
       ) : session === undefined ? (
         <p style={{ fontFamily: bodyFont, textAlign: "center", color: colors.text }}>Chargement…</p>
+      ) : recovery ? (
+        <ResetPasswordView
+          session={session}
+          onDone={(next) => {
+            setRecovery(false);
+            if (next === "forgot") setAuthStart({ mode: "forgot", error: "Ce lien a expiré ou a déjà été utilisé. Demandez-en un nouveau." });
+          }}
+        />
       ) : session ? (
         <OrganizerHome user={session.user} onLogout={() => sb.auth.signOut()} />
       ) : (
-        <AuthView onLoggedIn={() => {}} />
+        <AuthView initialMode={authStart.mode} initialError={authStart.error} onLoggedIn={() => {}} />
       )}
     </div>
   );
